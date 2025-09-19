@@ -1,0 +1,9 @@
+<!-- Logo de clínica placeholder - puedes reemplazar con tu logo real -->
+<svg width="120" height="60" viewBox="0 0 120 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="120" height="60" rx="8" fill="white"/>
+  <circle cx="30" cy="30" r="12" fill="#dc2626"/>
+  <rect x="45" y="18" width="60" height="8" rx="2" fill="#374151"/>
+  <rect x="45" y="34" width="40" height="6" rx="2" fill="#6b7280"/>
+  <text x="60" y="28" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#1f2937">CLÍNICA</text>
+  <text x="60" y="42" font-family="Arial, sans-serif" font-size="8" fill="#6b7280">MÉDICA</text>
+</svg>

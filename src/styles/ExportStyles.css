@@ -1,0 +1,120 @@
+/* Estilos específicos para exportación de calendario */
+[data-export-calendar="true"] {
+  box-sizing: border-box;
+  background: white;
+  overflow: visible !important;
+}
+
+.exporting {
+  position: relative !important;
+  width: auto !important;
+  min-width: unset !important;
+  max-width: unset !important;
+  height: auto !important;
+  transform: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  z-index: 1 !important;
+  background: white !important;
+}
+
+.exporting * {
+  box-sizing: border-box !important;
+  -webkit-transform: none !important;
+  transform: none !important;
+  transition: none !important;
+  animation: none !important;
+  max-width: none !important;
+  flex-shrink: 0 !important;
+}
+
+/* Asegurar que el contenido del calendario se preserve */
+.exporting .fc {
+  width: 100% !important;
+  height: auto !important;
+  min-height: unset !important;
+  display: block !important;
+}
+
+.exporting .fc-view-harness {
+  height: auto !important;
+  min-height: unset !important;
+  overflow: visible !important;
+}
+
+.exporting .fc-daygrid {
+  height: auto !important;
+  width: 100% !important;
+}
+
+.exporting .fc-scrollgrid {
+  height: auto !important;
+}
+
+.exporting .fc-scrollgrid-sync-table {
+  height: auto !important;
+}
+
+/* Headers y títulos */
+.exporting .fc-toolbar {
+  padding: 15px !important;
+  margin: 0 !important;
+  flex-wrap: nowrap !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+}
+
+.exporting .fc-toolbar-title {
+  font-size: 24px !important;
+  font-weight: bold !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+}
+
+/* Días de la semana */
+.exporting .fc-col-header-cell {
+  padding: 8px 4px !important;
+  font-weight: bold !important;
+  text-align: center !important;
+  background: #f8f9fa !important;
+  border: 1px solid #dee2e6 !important;
+  min-width: 100px !important;
+}
+
+/* Celdas de días */
+.exporting .fc-daygrid-day {
+  min-height: 100px !important;
+  height: auto !important;
+  border: 1px solid #dee2e6 !important;
+  background: white !important;
+  position: relative !important;
+  vertical-align: top !important;
+}
+
+/* Eventos del calendario */
+.exporting .fc-event {
+  margin: 1px !important;
+  padding: 2px 4px !important;
+  border-radius: 3px !important;
+  font-size: 10px !important;
+  line-height: 1.1 !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  display: block !important;
+  width: calc(100% - 2px) !important;
+}
+
+/* Número del día */
+.exporting .fc-daygrid-day-number {
+  padding: 4px !important;
+  font-weight: bold !important;
+  font-size: 12px !important;
+  position: absolute !important;
+  top: 2px !important;
+  right: 4px !important;
+}

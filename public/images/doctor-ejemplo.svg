@@ -1,0 +1,25 @@
+<!-- Doctor placeholder masculino - Avatar mejorado -->
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="60" cy="60" r="60" fill="#e0f2fe"/>
+  <!-- Cabello -->
+  <path d="M30 45 C30 25, 45 15, 60 15 C75 15, 90 25, 90 45 L85 50 C80 35, 70 30, 60 30 C50 30, 40 35, 35 50 Z" fill="#2d3748"/>
+  <!-- Cara -->
+  <circle cx="60" cy="52" r="22" fill="#fdbcb4"/>
+  <!-- Ojos -->
+  <circle cx="52" cy="48" r="2" fill="#000"/>
+  <circle cx="68" cy="48" r="2" fill="#000"/>
+  <!-- Gafas -->
+  <circle cx="52" cy="48" r="8" stroke="#4a5568" stroke-width="1" fill="none"/>
+  <circle cx="68" cy="48" r="8" stroke="#4a5568" stroke-width="1" fill="none"/>
+  <path d="M60 48 L64 48" stroke="#4a5568" stroke-width="1"/>
+  <!-- Nariz -->
+  <ellipse cx="60" cy="55" rx="1" ry="2" fill="#f4a79d"/>
+  <!-- Boca -->
+  <path d="M56 62 Q60 64 64 62" stroke="#4a5568" stroke-width="1" fill="none"/>
+  <!-- Cuerpo/Bata médica -->
+  <path d="M35 85 C35 75, 45 70, 60 70 C75 70, 85 75, 85 85 L85 120 L35 120 Z" fill="#ffffff"/>
+  <!-- Corbata -->
+  <path d="M58 75 L62 75 L64 95 L60 100 L56 95 Z" fill="#2563eb"/>
+  <!-- Collar de la bata -->
+  <path d="M45 75 L60 85 L75 75" stroke="#e9ecef" stroke-width="2" fill="none"/>
+</svg>

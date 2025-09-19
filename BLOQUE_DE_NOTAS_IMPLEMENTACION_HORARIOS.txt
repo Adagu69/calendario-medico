@@ -1,0 +1,359 @@
+
+BLOQUE DE NOTAS — IMPLEMENTACIÓN SISTEMA DE HORARIOS (TUASUSALUD)
+Autor: Agente IA
+Última actualización: ahora
+Zona horaria objetivo: America/Lima (-05:00)
+
+====================================================================
+0) OBJETIVO Y ALCANCE
+--------------------------------------------------------------------
+Construir un sistema web (React+Vite+Tailwind en el front y Node.js+TypeScript+PostgreSQL en el back) que:
+- Autentique por LOGIN como primera pantalla.
+- Aplique RBAC (roles): admin, gerente, jefe_area, doctor.
+- Permita registrar y gestionar horarios (ingreso/salida) por doctor, especialidad, servicio, oficina.
+- Evite solapes de turnos y valide rangos de fechas/horas.
+- Calcule horas trabajadas por día y total mensual.
+- Exporte un Excel con el FORMATO DEL EXCEL DE TUASUSALUD (cabeceras, días 1..31 con “Ingreso/Salida”), incluyendo totales mensuales.
+- Incluya CRUD + búsqueda/filtros para usuarios, doctores, horarios.
+- Mantenga auditoría básica (quién creó/editó turnos).
+
+Fuera de alcance (por ahora): integración con citas actuales, notificaciones por email/WhatsApp, firma digital, SSO.
+
+
+====================================================================
+1) REQUISITOS FUNCIONALES (RF) Y CRITERIOS DE ACEPTACIÓN (CA)
+--------------------------------------------------------------------
+RF1. Autenticación
+- CA1.1: La ruta “/” redirige a /login cuando no hay sesión.
+- CA1.2: Al loguear, se entrega JWT en cookie httpOnly (secure+sameSite=lax en prod).
+- CA1.3: Recuperación de contraseña (opcional FASE 2).
+
+RF2. Roles (RBAC)
+- CA2.1: ADMIN puede CRUD de usuarios, doctores, horarios, servicios, especialidades, oficinas, exportar reportes.
+- CA2.2: GERENTE: Solo lectura + exportar reportes.
+- CA2.3: JEFE_AREA: CRUD de horarios de su especialidad/servicio asignados; lectura del resto.
+- CA2.4: DOCTOR: Solo lectura de sus propios horarios y totales.
+
+RF3. Gestión de Doctores (campos del Excel)
+- CA3.1: Formulario con: código único, nombre de la clínica (IPRESS), tipo documento (DNI/CEX/PAS), número de documento, profesión, número de colegiatura, apellidos, nombres, especialidad, servicio, teléfono/email opcional.
+- CA3.2: Validaciones de unicidad: código único, documento, colegiatura.
+- CA3.3: Búsqueda y filtros por nombre, especialidad, servicio, código, documento.
+
+RF4. Gestión de Horarios (Turnos)
+- CA4.1: Crear/editar/eliminar turnos con: doctor, especialidad, servicio, oficina (opcional), fecha/hora inicio y fin, notas.
+- CA4.2: Validar que end > start; máximo 24 h y admite cruces de medianoche (p.ej. 20:00-06:00 al día siguiente).
+- CA4.3: Prohibir solapes del mismo doctor (misma franja que se cruza).
+- CA4.4: Copiar/pegar semana y duplicar patrón “L-Mi-V” (FASE 2 si hay tiempo).
+- CA4.5: Calendario muestra puntos/etiquetas por tramos (colores por turno/servicio).
+
+RF5. Cálculo de horas
+- CA5.1: Horas por día: suma de (fin - inicio) para cada día. Si cruza medianoche, se reparte en cada día.
+- CA5.2: Total mensual: suma de todas las horas del mes por doctor.
+- CA5.3: Redondeo configurable (exacto por defecto; opción a redondeo a 15 min FASE 2).
+
+RF6. Exportación Excel TUASUSALUD
+- CA6.1: Descarga .xlsx con cabeceras: IPRESS, Código Único, Nombre, RED, Tipo y N° Documento, Profesión, N° Colegiatura, Apellidos, Nombres, Especialidad, Servicio.
+- CA6.2: Columnas por día 1..31 con subcolumnas “Ingreso/Salida” (HH:mm).
+- CA6.3: Incluye columna “Horas Mensuales” por doctor.
+- CA6.4: Soporta meses de 28/29/30/31 días (columnas sobrantes vacías).
+
+RF7. UI/UX por rol
+- CA7.1: ADMIN: layout con calendario a la izquierda y panel de herramientas a la derecha (Usuarios, Doctores, Horarios, Reportes).
+- CA7.2: JEFE_AREA: Calendario + formulario de carga de horarios (limitado a su especialidad/servicio).
+- CA7.3: GERENTE: Tablero de lectura + exportación.
+- CA7.4: DOCTOR: vista de sus turnos y total del mes.
+
+RF8. Auditoría y logs
+- CA8.1: Guardar created_by/updated_at en turnos.
+- CA8.2: Registro de eventos importantes en log de servidor.
+
+
+====================================================================
+2) MODELO DE DATOS Y MIGRACIONES (POSTGRES)
+--------------------------------------------------------------------
+Tablas nuevas/ajustes mínimos (si no existen aún):
+- roles(id, code: 'admin'|'gerente'|'jefe_area'|'doctor', name)
+- user_roles(user_id, role_id) PK compuesta.
+- services(id, name, is_active, timestamps)
+- doctors: agregar columnas => code (único), clinic_name, doc_type (ENUM: 'DNI','CEX','PAS'), doc_number, profession, license_number, last_name, first_name, specialty_id (FK), service_id (FK).
+- doctor_specialties(doctor_id, specialty_id) si un médico tiene varias especialidades.
+- doctor_shifts(id, doctor_id, office_id?, specialty_id, service_id, start_at, end_at, notes, source, is_active, created_by, timestamps) con índice y EXCLUDE para evitar solapes:
+  EXCLUDE USING gist (
+    doctor_id WITH =,
+    tstzrange(start_at,end_at,'[)') WITH &&
+  )
+- Vistas:
+  v_doctor_hours_daily(doctor_id, day, hours)
+  v_doctor_hours_month(doctor_id, month, hours_month)
+
+Índices sugeridos:
+- doctors(code), doctors(doc_number), doctors(license_number) UNIQUE
+- doctor_shifts(doctor_id, date_trunc('month', start_at))
+- doctor_shifts(specialty_id, service_id, start_at)
+
+Migraciones: crear en orden roles → user_roles → services → alter doctors → doctor_shifts → vistas.
+
+
+====================================================================
+3) REGLAS DE NEGOCIO Y VALIDACIONES
+--------------------------------------------------------------------
+- Un doctor no puede tener turnos que se crucen en tiempo (validar en DB + backend).
+- end_at > start_at. Si end_at < start_at se interpreta como cruce de medianoche y se permite.
+- Límite de duración configurable (por defecto 16 h).
+- ZONA HORARIA fija “America/Lima” en back y en front (mostrar HH:mm 24h).
+- Borrado lógico de turnos (is_active=false) para preservar historial (opcional).
+- JEFE_AREA solo puede manipular turnos de specialty_id/service_id asignados a su usuario.
+- Rounding/Horas: calcular de forma exacta con decimales (2 decimales).
+
+
+====================================================================
+4) API REST (NODE+TS) — ENDPOINTS Y DTOs
+--------------------------------------------------------------------
+Auth:
+- POST /auth/login { email, password } → 200 { user:{id,name,roles}, tokenCookie }
+- GET  /me → user + roles
+
+Usuarios (admin):
+- GET /users?search=&role=
+- POST /users { name,email,password,roles[] }
+- PATCH /users/:id { name?,email?,password?,roles? }
+- DELETE /users/:id
+
+Doctores:
+- GET /doctors?search=&specialty_id=&service_id=&code=&doc_number=
+- POST /doctors { code, clinic_name, doc_type, doc_number, profession, license_number, last_name, first_name, specialty_id, service_id, email?, phone? }
+- PATCH /doctors/:id { ...campos opcionales... }
+- DELETE /doctors/:id
+
+Servicios/Especialidades/Oficinas:
+- GET /services | /specialties | /offices (CRUD admin si se requiere)
+
+Horarios (turnos):
+- GET /shifts?doctor_id=&specialty_id=&service_id=&office_id=&month=YYYY-MM
+- POST /shifts { doctor_id, specialty_id, service_id, office_id?, start_at, end_at, notes? }
+- PATCH /shifts/:id { specialty_id?, service_id?, office_id?, start_at?, end_at?, notes?, is_active? }
+- DELETE /shifts/:id
+
+Reportes/Horas:
+- GET /reports/hours/daily?doctor_id=&month=YYYY-MM
+- GET /reports/hours/month?doctor_id=&month=YYYY-MM
+
+Exportación Excel:
+- GET /exports/tuasalud?month=YYYY-MM&specialty_id=&service_id=
+  → devuelve .xlsx con días 1..31 (Ingreso/Salida) + total mensual por doctor.
+
+Códigos de error comunes:
+- 400 VALIDATION_ERROR (payload inválido)
+- 409 SHIFT_OVERLAP (conflicto de turno)
+- 403 FORBIDDEN (sin permisos)
+- 404 NOT_FOUND
+
+
+====================================================================
+5) SEGURIDAD
+--------------------------------------------------------------------
+- Password hashing: Argon2 o bcrypt (salt).
+- JWT corto (15min) + Refresh (opcional FASE 2). Cookie httpOnly.
+- CORS: origin frontend, credentials true.
+- Rate limiting en /auth/login.
+- Sanitizar entrada (Zod o Joi) y parámetros (SQL injection protegido por query builder/ORM).
+- Auditoría: tabla audit_log (opcional) o campos created_by/updated_at.
+- .env en servidor (no subir a git).
+
+
+====================================================================
+6) FRONTEND (REACT+VITE+TAILWIND)
+--------------------------------------------------------------------
+Rutas:
+- /login
+- /admin/dashboard  (RequireRole[admin])
+- /admin/users      (CRUD)
+- /admin/doctors    (CRUD + filtros)
+- /admin/schedules  (calendario + formulario turnos)
+- /gerente/reportes (lectura + export)
+- /jefe-area/schedules (CRUD limitado)
+- /doctor/mis-turnos (solo lectura)
+
+Layout ADMIN:
+- Izquierda: Calendario mensual (FullCalendar o propio).
+- Derecha: Panel de herramientas con tabs: Usuarios, Doctores, Horarios, Reportes.
+- Barra de filtros arriba: Mes, Especialidad, Servicio, Doctor, Oficina.
+- Botón “Exportar Excel (TUASUSALUD)” → llama a /exports/tuasalud con filtros.
+
+Componentes:
+- <AuthGuard/RequireRole />
+- <CalendarMonth events={shifts}/> (drag/resize opcional FASE 2)
+- <ShiftForm/> (react-hook-form + zod)
+- <DoctorForm/>
+- <FiltersBar/>
+- <ExportButton/>
+- <DataTable/> genérico con paginación y búsqueda.
+
+Estados/Store:
+- RTK Query o React Query para cachear catálogos y turnos.
+- Manejo global de TZ “America/Lima”.
+
+Toasts/UX:
+- Exitos/errores en CRUD, indicador de solape con mensaje claro.
+- Confirmación al eliminar.
+- Loading states.
+
+
+====================================================================
+7) CÁLCULO DE HORAS (DETALLE)
+--------------------------------------------------------------------
+Reglas:
+- Si start_at y end_at están el mismo día: horas = (end-start).
+- Si end_at < start_at (cruza medianoche): dividir
+  -- tramo1: start → fin del día (23:59:59)
+  -- tramo2: inicio del día siguiente (00:00) → end
+- Agregar todos los tramos por día.
+- Guardar resultados en vistas SQL y/o calcular al vuelo para el reporte.
+- Precisar a 2 decimales.
+
+
+====================================================================
+8) EXPORTACIÓN EXCEL (FORMATO)
+--------------------------------------------------------------------
+- Librería: exceljs.
+- Hoja “Data” con:
+  columnas base: IPRESS, Código Único, Nombre, RED, Tipo Documento, Número Documento, Profesión, Número Colegiatura, Apellidos, Nombres, Especialidad, Servicio.
+  luego, por cada día del mes: dos columnas “Ingreso” y “Salida” (HH:mm).
+  última columna: “Horas Mensuales” (suma).
+- Para meses con <31 días, dejar columnas restantes vacías.
+- Fuentes y bordes simples (mejorar estilos en FASE 2).
+- Endpoint descarga con cabeceras correctas (Content-Type y Content-Disposition).
+
+
+====================================================================
+9) PRUEBAS
+--------------------------------------------------------------------
+- Unitarias: validadores de payload, cálculo de horas (incluye medianoche).
+- Integración: POST /shifts evita solapes (casos límite: pegados, inclusivo [), etc.).
+- E2E: flujo login → crear turno → ver en calendario → exportar Excel.
+- Datos semilla para pruebas (2 especialidades, 1 servicio, 5 doctores, 1 jefe_area).
+
+
+====================================================================
+10) DEVOPS / DESPLIEGUE
+--------------------------------------------------------------------
+- Docker Compose: postgres:16 + pgadmin opcional.
+- Migraciones (Prisma/Knex) automáticas en CI/CD.
+- Variables .env:
+  DATABASE_URL=postgres://user:pass@host:5432/db
+  JWT_SECRET=...
+  TZ=America/Lima
+  CORS_ORIGIN=http://localhost:5173
+- Backups diarios de DB.
+- Logs: pino log + morgan para HTTP.
+
+
+====================================================================
+11) ESTRUCTURA DE CÓDIGO (SUGERIDA)
+--------------------------------------------------------------------
+backend/
+  src/
+    app.ts
+    routes/
+      auth.routes.ts
+      users.routes.ts
+      doctors.routes.ts
+      shifts.routes.ts
+      reports.routes.ts
+      exports.routes.ts
+    controllers/
+    services/
+    repositories/
+    middlewares/
+      auth.ts
+      requireRole.ts
+    schemas/            (zod)
+    utils/
+    config/
+  prisma|knex/
+  tests/
+
+frontend/
+  src/
+    api/ (RTK Query o fetch wrappers)
+    components/
+    features/
+      auth/
+      doctors/
+      schedules/
+      reports/
+    pages/
+      Login.tsx
+      AdminDashboard.tsx
+      UsersPage.tsx
+      DoctorsPage.tsx
+      SchedulesPage.tsx
+      ReportsPage.tsx
+    routes/
+    store/
+    hooks/
+    layout/
+
+
+====================================================================
+12) ROADMAP (SPRINTS)
+--------------------------------------------------------------------
+Sprint 1 (DB+Auth+Roles)
+- Migraciones (roles, user_roles, services, alter doctors, doctor_shifts, vistas).
+- Seed roles y usuario admin.
+- Login + JWT + guardas.
+- Páginas: /login y layout protegido.
+
+Sprint 2 (CRUD Doctores y Catálogos)
+- Endpoints y formularios de doctores.
+- Filtros/búsquedas.
+- Catálogos: specialties, services, offices.
+
+Sprint 3 (Horarios + Calendario)
+- Endpoints /shifts con validación anti-solape.
+- Calendario mensual + ShiftForm (crear/editar/eliminar).
+- Filtros por mes/especialidad/servicio/doctor.
+
+Sprint 4 (Reportes + Excel)
+- Cálculo de horas (vistas + capa servicio).
+- Export TUASUSALUD (.xlsx) con totales.
+- Vista de gerente (solo lectura + descarga).
+
+Sprint 5 (Pulido + QA + Deploy)
+- Auditoría mínima, toasts, errores UX.
+- Tests unit/integr/e2e.
+- Docker compose y despliegue.
+
+
+====================================================================
+13) DATOS DE PRUEBA (MINI SEED)
+--------------------------------------------------------------------
+- roles: admin, gerente, jefe_area, doctor
+- users: admin@cms.local (admin), jefe.pediatria@cms.local (jefe_area), gerente@cms.local (gerente)
+- specialties: Pediatría, Ginecología
+- services: UPSS - CONSULTA EXTERNA
+- offices: Consultorio 1, Consultorio 2
+- doctors: 5 registros con campos completos (DNI/colegiatura/código).
+- shifts: 1 semana cargada para validar cálculos.
+
+====================================================================
+14) ENTREGABLES
+--------------------------------------------------------------------
+- Código fuente backend y frontend.
+- Script SQL de migraciones + seed.
+- Archivo .env.example.
+- Guía de despliegue (README).
+- Casos de prueba (postman/insomnia collection).
+- Capturas: login, panel admin, formulario doctor, calendario, exportación Excel.
+- Excel de muestra generado para un mes (junio 2025) con 3 doctores.
+
+====================================================================
+15) NOTAS FINALES Y RIESGOS
+--------------------------------------------------------------------
+- Criterios de solape: usar rango [start, end) para evitar conflictos en bordes.
+- TZ: al parsear HH:mm desde el front, crear start_at/end_at con fecha local del calendario (America/Lima).
+- Rendimiento: paginar /doctors y lazy-load de turnos por mes.
+- Seguridad: NO exponer JWT al JS (usar cookie httpOnly).
+- Accesibilidad: contraste/labels en formularios.
+
+FIN DEL BLOQUE DE NOTAS
