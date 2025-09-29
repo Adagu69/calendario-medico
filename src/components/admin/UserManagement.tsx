@@ -37,50 +37,43 @@ import {
   User,
   Users
 } from 'lucide-react';
-import { usersAPI } from '@/services/api';
-
-// Corrected UserType to match backend snake_case
-interface UserType {
-  id: string;
-  username: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  role: 'admin' | 'gerencia' | 'jefe' | 'doctor';
-  section_id?: string;
-  is_active: boolean;
-  last_login: string | null;
-  created_at: string;
-}
-
-// This interface should align with the MedicalSection type from the API
-interface Section {
-  id: string;
-  name: string;
-  display_name: string;
-}
+import { usersAPI } from '@/services/api'; // Assuming usersAPI exists and is correctly typed
+import type { ExtendedUser, MedicalSection } from '../../types/medical';
 
 interface UserManagementProps {
-  sections: Section[];
+  sections: MedicalSection[];
 }
 
+interface FormData {
+  username: string;
+  email: string;
+  password?: string;
+  first_name: string;
+  last_name: string;
+  role: 'admin' | 'gerencia' | 'jefe' | 'doctor' | 'viewer';
+  section_id: string | 'none';
+}
+
+const INITIAL_FORM: FormData = {
+  username: '',
+  email: '',
+  password: '',
+  first_name: '',
+  last_name: '',
+  role: 'jefe',
+  section_id: 'none'
+};
+
 export default function UserManagement({ sections }: UserManagementProps) {
-  const [users, setUsers] = useState<UserType[]>([]);
+  const [users, setUsers] = useState<ExtendedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<UserType | null>(null);
-  const [formData, setFormData] = useState({
-    username: '',
-    email: '',
-    password: '', 
-    first_name: '',
-    last_name: '',
-    role: 'jefe' as 'admin' | 'gerencia' | 'jefe' | 'doctor',
-    section_id: 'none'
-  });
+  const [editingUser, setEditingUser] = useState<ExtendedUser | null>(null);
+  const [formData, setFormData] = useState<FormData>(INITIAL_FORM);
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
   useEffect(() => {
@@ -96,32 +89,19 @@ export default function UserManagement({ sections }: UserManagementProps) {
       if (response.data.success) {
         setUsers(response.data.data);
       } else {
-        setError(response.data.error || 'Error al cargar usuarios');
+        setError(response.data.error || 'Error loading users');
       }
     } catch (err: any) {
-      console.error('Error cargando usuarios:', err);
-      if (err.response?.status === 401) {
-        setError('Tu sesión ha expirado. Por favor inicia sesión nuevamente.');
-      } else if (err.response?.data?.error) {
-        setError(err.response.data.error);
-      } else {
-        setError('Error al cargar usuarios. Verifica tu conexión.');
-      }
+      console.error('Error loading users:', err);
+      setError('Error loading users. Please check your connection.');
     } finally {
       setLoading(false);
     }
   };
 
   const resetForm = () => {
-    setFormData({
-      username: '',
-      email: '',
-      password: '',
-      first_name: '',
-      last_name: '',
-      role: 'jefe',
-      section_id: 'none'
-    });
+    setFormData(INITIAL_FORM);
+    setConfirmPassword('');
     setError('');
     setSuccessMessage('');
   };
@@ -132,7 +112,7 @@ export default function UserManagement({ sections }: UserManagementProps) {
     setIsDialogOpen(true);
   };
 
-  const handleEditUser = (user: UserType) => {
+  const handleEditUser = (user: ExtendedUser) => {
     setEditingUser(user);
     setFormData({
       username: user.username,
@@ -141,8 +121,9 @@ export default function UserManagement({ sections }: UserManagementProps) {
       first_name: user.first_name,
       last_name: user.last_name,
       role: user.role,
-      section_id: user.section_id || 'none'
+      section_id: user.section_id?.toString() || 'none'
     });
+    setConfirmPassword('');
     setError('');
     setSuccessMessage('');
     setIsDialogOpen(true);
@@ -154,11 +135,8 @@ export default function UserManagement({ sections }: UserManagementProps) {
     setError('');
 
     try {
-      if (!formData.username.trim()) {
-        setError('El nombre de usuario es requerido');
-        setFormLoading(false);
-        return;
-      }
+      const trimmedPassword = formData.password?.trim() || '';
+      const trimmedConfirm = confirmPassword.trim();
 
       const submitData: any = {
         username: formData.username,
@@ -166,85 +144,104 @@ export default function UserManagement({ sections }: UserManagementProps) {
         first_name: formData.first_name,
         last_name: formData.last_name,
         role: formData.role,
-        section_id: formData.section_id === 'none' ? null : formData.section_id,
+        section_id: formData.section_id === 'none' ? null : Number(formData.section_id),
       };
 
       if (editingUser) {
-        const response = await usersAPI.update(editingUser.id, submitData);
+        if (trimmedPassword.length > 0) {
+          if (trimmedPassword.length < 6) {
+            setError('Password must be at least 6 characters long');
+            setFormLoading(false);
+            return;
+          }
+          if (trimmedPassword !== trimmedConfirm) {
+            setError('Passwords do not match');
+            setFormLoading(false);
+            return;
+          }
+          submitData.password = trimmedPassword;
+        }
+        const response = await usersAPI.update(String(editingUser.id), submitData);
         if (response.data.success) {
           await loadUsers();
           setIsDialogOpen(false);
-          setSuccessMessage('Usuario actualizado exitosamente');
+          setEditingUser(null);
+          setFormData(INITIAL_FORM);
+          setConfirmPassword('');
+          setSuccessMessage('User updated successfully');
         } else {
-          setError(response.data.error || 'Error al actualizar usuario');
+          setError(response.data.error || 'Error updating user');
         }
       } else {
-        if (!formData.password || formData.password.length < 6) {
-          setError('La contraseña es requerida y debe tener al menos 6 caracteres');
+        if (trimmedPassword.length < 6) {
+          setError('Password is required and must be at least 6 characters long');
           setFormLoading(false);
           return;
         }
-        submitData.password = formData.password;
+        if (trimmedPassword !== trimmedConfirm) {
+          setError('Passwords do not match');
+          setFormLoading(false);
+          return;
+        }
+        submitData.password = trimmedPassword;
         const response = await usersAPI.create(submitData);
         if (response.data.success) {
           await loadUsers();
           setIsDialogOpen(false);
-          setSuccessMessage('Usuario creado exitosamente');
+          setEditingUser(null);
+          setFormData(INITIAL_FORM);
+          setConfirmPassword('');
+          setSuccessMessage('User created successfully');
         } else {
-          setError(response.data.error || 'Error al crear usuario');
+          setError(response.data.error || 'Error creating user');
         }
       }
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err: any) {
-      console.error('❌ Error en la operación:', err);
-      const errorMsg = err.response?.data?.error || (err.response?.data?.details?.[0]?.msg) || 'Error al procesar la solicitud.';
+      console.error('❌ Operation error:', err);
+      const errorMsg = err.response?.data?.error || 'Error processing request.';
       setError(errorMsg);
     } finally {
       setFormLoading(false);
     }
   };
 
-  const handleDeleteUser = async (user: UserType) => {
-    const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    if (currentUser.id === user.id) {
-      setError('No puedes eliminar tu propio usuario');
-      return;
-    }
-
-    if (!confirm(`¿Estás seguro de que deseas desactivar al usuario "${user.username}"?`)) {
+  const handleDeleteUser = async (user: ExtendedUser) => {
+    // Logic to prevent self-deletion should be handled carefully
+    if (!confirm(`Are you sure you want to deactivate user "${user.username}"?`)) {
       return;
     }
 
     try {
       setError('');
-      const response = await usersAPI.delete(user.id);
+      const response = await usersAPI.delete(String(user.id));
       if (response.data.success) {
         await loadUsers();
-        setSuccessMessage(`Usuario ${user.username} desactivado exitosamente`);
+        setSuccessMessage(`User ${user.username} deactivated successfully`);
         setTimeout(() => setSuccessMessage(''), 3000);
       } else {
-        setError(response.data.error || 'Error al eliminar usuario');
+        setError(response.data.error || 'Error deleting user');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Error al eliminar usuario.');
+      setError(err.response?.data?.error || 'Error deleting user.');
     }
   };
 
   const getRoleBadge = (role: string) => {
     const roleConfig: { [key: string]: { label: string; className: string } } = {
       admin: { label: 'Admin', className: 'bg-red-100 text-red-800' },
-      jefe: { label: 'Jefe de Sección', className: 'bg-blue-100 text-blue-800' },
-      gerencia: { label: 'Gerencia', className: 'bg-yellow-100 text-yellow-800' },
+      jefe: { label: 'Section Chief', className: 'bg-blue-100 text-blue-800' },
+      gerencia: { label: 'Management', className: 'bg-yellow-100 text-yellow-800' },
       doctor: { label: 'Doctor', className: 'bg-purple-100 text-purple-800' }
     };
     const config = roleConfig[role] || { label: role, className: 'bg-gray-100 text-gray-800' };
     return <Badge className={config.className}>{config.label}</Badge>;
   };
 
-  const getSectionName = (sectionId?: string) => {
+  const getSectionName = (sectionId?: number) => {
     if (!sectionId) return 'N/A';
     const section = sections.find(s => s.id === sectionId);
-    return section?.display_name || sectionId;
+    return String(section?.name || sectionId);
   };
 
   const filteredUsers = users.filter(user =>
@@ -256,44 +253,31 @@ export default function UserManagement({ sections }: UserManagementProps) {
 
   return (
     <div className="space-y-6">
+       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Gestión de Usuarios</h2>
-          <p className="text-gray-600 mt-1">Administra los usuarios del sistema</p>
+          <h2 className="text-2xl font-bold text-gray-900">User Management</h2>
+          <p className="text-gray-600 mt-1">Administer system users</p>
         </div>
         <Button onClick={handleCreateUser} className="flex items-center gap-2">
           <Plus className="h-4 w-4" />
-          Nuevo Usuario
+          New User
         </Button>
       </div>
 
-      {error && (
-        <Alert className="border-red-200 bg-red-50">
-          <AlertDescription className="text-red-700">
-            {error}
-          </AlertDescription>
-        </Alert>
-      )}
+      {/* Alerts */}
+      {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+      {successMessage && <Alert className="border-green-200 bg-green-50 text-green-700"><AlertDescription>{successMessage}</AlertDescription></Alert>}
 
-      {successMessage && (
-        <Alert className="border-green-200 bg-green-50">
-          <AlertDescription className="text-green-700">
-            {successMessage}
-          </AlertDescription>
-        </Alert>
-      )}
-
+      {/* User List Card */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Lista de Usuarios
-            </CardTitle>
+            <CardTitle className="flex items-center gap-2"><Users className="h-5 w-5" />User List</CardTitle>
             <div className="flex items-center gap-2">
               <Search className="h-4 w-4 text-gray-400" />
               <Input
-                placeholder="Buscar usuarios..."
+                placeholder="Search users..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-64"
@@ -303,84 +287,48 @@ export default function UserManagement({ sections }: UserManagementProps) {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="text-center py-8">Cargando usuarios...</div>
+            <div className="text-center py-8">Loading users...</div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Usuario</TableHead>
+                  <TableHead>Username</TableHead>
                   <TableHead>Email</TableHead>
-                  <TableHead>Nombre Completo</TableHead>
-                  <TableHead>Rol</TableHead>
-                  <TableHead>Sección</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Último Acceso</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
+                  <TableHead>Full Name</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Section</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Last Login</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredUsers.map((user) => (
                   <TableRow key={user.id}>
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
-                        <User className="h-4 w-4 text-gray-400" />
-                        {user.username}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Mail className="h-4 w-4 text-gray-400" />
-                        {user.email}
-                      </div>
-                    </TableCell>
+                    <TableCell className="font-medium">{user.username}</TableCell>
+                    <TableCell>{user.email}</TableCell>
                     <TableCell>{`${user.first_name} ${user.last_name}`}</TableCell>
                     <TableCell>{getRoleBadge(user.role)}</TableCell>
                     <TableCell>{getSectionName(user.section_id)}</TableCell>
                     <TableCell>
-                      {user.is_active ? (
-                        <div className="flex items-center gap-1 text-green-600">
-                          <UserCheck className="h-4 w-4" />
-                          Activo
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1 text-red-600">
-                          <UserX className="h-4 w-4" />
-                          Inactivo
-                        </div>
-                      )}
+                      <Badge variant={user.is_active ? 'default' : 'destructive'}>
+                        {user.is_active ? 'Active' : 'Inactive'}
+                      </Badge>
                     </TableCell>
                     <TableCell>
-                      {user.last_login 
-                        ? new Date(user.last_login).toLocaleDateString('es-ES')
-                        : 'Nunca'
-                      }
+                      {user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEditUser(user)}
-                        >
-                          <Edit2 className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleDeleteUser(user)}
-                          className="text-red-600 hover:text-red-700"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => handleEditUser(user)}><Edit2 className="h-4 w-4" /></Button>
+                        <Button variant="destructive" size="sm" onClick={() => handleDeleteUser(user)}><Trash2 className="h-4 w-4" /></Button>
                       </div>
                     </TableCell>
                   </TableRow>
                 ))}
                 {filteredUsers.length === 0 && !loading && (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-gray-500">
-                      No se encontraron usuarios
-                    </TableCell>
+                    <TableCell colSpan={8} className="text-center py-8 text-gray-500">No users found</TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -389,144 +337,102 @@ export default function UserManagement({ sections }: UserManagementProps) {
         </CardContent>
       </Card>
 
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      {/* Add/Edit Dialog */}
+      <Dialog
+        open={isDialogOpen}
+        onOpenChange={(open) => {
+          setIsDialogOpen(open);
+          if (!open) {
+            setEditingUser(null);
+            setFormData(INITIAL_FORM);
+            setConfirmPassword('');
+          }
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}
-            </DialogTitle>
+            <DialogTitle>{editingUser ? 'Edit User' : 'New User'}</DialogTitle>
             <DialogDescription>
-              {editingUser 
-                ? 'Modifica los datos del usuario seleccionado.'
-                : 'Completa el formulario para crear un nuevo usuario.'
-              }
+              {editingUser ? 'Modify the selected user\'s data.' : 'Complete the form to create a new user.'}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Nombre de Usuario
-              </label>
-              <Input
-                value={formData.username}
-                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                placeholder="Ingresa el nombre de usuario"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
-              </label>
-              <Input
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                placeholder="Ingresa el email"
-                required
-              />
-            </div>
-
-            {!editingUser && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Contraseña
+            <div className="grid gap-4">
+              <div className="space-y-2">
+                <label htmlFor="username">Username</label>
+                <Input id="username" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value })} required />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="email">Email</label>
+                <Input id="email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} required />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="password" className="flex items-center justify-between">
+                  <span>Password {editingUser ? '(optional)' : ''}</span>
+                  {editingUser && <span className="text-xs text-gray-500">Deja en blanco para mantenerla</span>}
                 </label>
                 <Input
+                  id="password"
                   type="password"
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="Mínimo 6 caracteres"
-                  required
+                  required={!editingUser}
                 />
               </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nombre
-                </label>
+              <div className="space-y-2">
+                <label htmlFor="confirm_password">Confirm Password {(!editingUser || (formData.password?.trim().length ?? 0) > 0) && <span className="text-red-500">*</span>}</label>
                 <Input
-                  value={formData.first_name}
-                  onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
-                  placeholder="Nombre"
-                  required
+                  id="confirm_password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required={!editingUser || (formData.password?.trim().length ?? 0) > 0}
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Apellido
-                </label>
-                <Input
-                  value={formData.last_name}
-                  onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
-                  placeholder="Apellido"
-                  required
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label htmlFor="first_name">First Name</label>
+                  <Input id="first_name" value={formData.first_name} onChange={(e) => setFormData({ ...formData, first_name: e.target.value })} required />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="last_name">Last Name</label>
+                  <Input id="last_name" value={formData.last_name} onChange={(e) => setFormData({ ...formData, last_name: e.target.value })} required />
+                </div>
               </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Rol
-              </label>
-              <Select
-                value={formData.role}
-                onValueChange={(value: any) => setFormData({ ...formData, role: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecciona un rol" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="jefe">Jefe de Sección</SelectItem>
-                  <SelectItem value="gerencia">Gerencia</SelectItem>
-                  <SelectItem value="doctor">Doctor</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {(formData.role === 'jefe' || formData.role === 'doctor') && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Sección
-                </label>
-                <Select
-                  value={formData.section_id}
-                  onValueChange={(value) => setFormData({ ...formData, section_id: value })}
-                >
+              <div className="space-y-2">
+                <label htmlFor="role">Role</label>
+                <Select value={formData.role} onValueChange={(value) => setFormData({ ...formData, role: value as FormData['role'] })}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecciona una sección" />
+                    <SelectValue placeholder="Select a role" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Sin sección asignada</SelectItem>
-                    {sections.map((section) => (
-                      <SelectItem key={section.id} value={section.id}>
-                        {section.display_name}
-                      </SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="gerencia">Management</SelectItem>
+                    <SelectItem value="jefe">Section Chief</SelectItem>
+                    <SelectItem value="doctor">Doctor</SelectItem>
+                    <SelectItem value="viewer">Viewer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="section_id">Section</label>
+                <Select value={formData.section_id} onValueChange={(value) => setFormData({ ...formData, section_id: value })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a section" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {sections.map(section => (
+                      <SelectItem key={section.id} value={String(section.id)}>{section.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            )}
-
+            </div>
+            {formLoading && <div className="text-center">Saving...</div>}
             <div className="flex justify-end gap-2 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setIsDialogOpen(false);
-                  setError('');
-                }}
-                disabled={formLoading}
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={formLoading}>
-                {formLoading ? 'Guardando...' : editingUser ? 'Actualizar Usuario' : 'Crear Usuario'}
-              </Button>
+              <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)} disabled={formLoading}>Cancel</Button>
+              <Button type="submit" disabled={formLoading}>{formLoading ? 'Saving...' : 'Save User'}</Button>
             </div>
           </form>
         </DialogContent>

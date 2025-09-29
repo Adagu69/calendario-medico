@@ -1,584 +1,318 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit3, Trash2, Users, Clock, RotateCcw, UserCheck } from 'lucide-react';
-import type { ExtendedDoctor, MedicalSection, ExtendedUser } from '../types/medical';
-import { doctorService, userService } from '../services/medicalApi';
-import { sectionsAPI } from '../services/api';
+import { Plus, Edit, Trash, AlertTriangle, Upload, Check } from 'lucide-react';
+import type { ExtendedDoctor, MedicalSection, ExtendedUser, Specialty } from '../types/medical';
+import { doctorService } from '../services/medicalApi';
+import { Button } from './ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Card, CardContent } from './ui/card';
+import { Checkbox } from './ui/checkbox';
 
 interface DoctorManagementProps {
   currentUser: ExtendedUser;
-  selectedSection?: string;
+  selectedSection: string;
+  sections: MedicalSection[];
+  specialties: Specialty[];
   onDoctorChange?: () => void;
 }
+
+interface DoctorFormData {
+  name: string;
+  email: string;
+  phone: string;
+  license: string;
+  section_id: number | undefined;
+  specialty_ids: number[];
+  avatar_url: string;
+}
+
+const DOCTOR_FORM_INITIAL_STATE: DoctorFormData = {
+  name: '',
+  email: '',
+  phone: '',
+  license: '',
+  section_id: undefined,
+  specialty_ids: [],
+  avatar_url: '',
+};
+
+const generateDefaultAvatar = (name: string) => {
+  const initials = name.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2);
+  const colors = ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"];
+  const color = colors[name.length % colors.length];
+  return `data:image/svg+xml,${encodeURIComponent(`
+    <svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="60" cy="60" r="60" fill="${color}"/>
+      <text x="60" y="70" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-size="32" font-weight="bold">${initials}</text>
+    </svg>
+  `)}`;
+};
 
 export const DoctorManagement: React.FC<DoctorManagementProps> = ({
   currentUser,
   selectedSection,
+  sections,
+  specialties,
   onDoctorChange
 }) => {
-  const [sections, setSections] = useState<MedicalSection[]>([]);
   const [doctors, setDoctors] = useState<ExtendedDoctor[]>([]);
-  const [activeSection, setActiveSection] = useState<string>(selectedSection || '');
   const [loading, setLoading] = useState(true);
-  const [isEditing, setIsEditing] = useState<string | null>(null);
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingDoctor, setEditingDoctor] = useState<ExtendedDoctor | null>(null);
+  const [formData, setFormData] = useState<DoctorFormData>(DOCTOR_FORM_INITIAL_STATE);
 
-  // Estados para el formulario de doctor
-  const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
-    documentType: 'DNI' as const,
-    documentNumber: '',
-    profession: '',
-    licenseNumber: '',
-    email: '',
-    phone: '',
-    photo: '/default-avatar.png',
-    sectionId: '',
-    isChief: false
-  });
-
-  // Cargar secciones al iniciar
   useEffect(() => {
-    loadSections();
-  }, []);
-
-  // Cargar doctores cuando cambia la sección
-  useEffect(() => {
-    if (activeSection) {
-      loadDoctors();
+    if (selectedSection) {
+      loadDoctors(selectedSection);
     }
-  }, [activeSection]);
+  }, [selectedSection]);
 
-  const loadSections = async () => {
-    try {
-      const sectionsResponse = await sectionsAPI.getAll();
-      const sectionsData = sectionsResponse.data.success ? sectionsResponse.data.data : [];
-      setSections(sectionsData);
-      
-      // Si el usuario es jefe de sección, establecer su sección por defecto
-      if (currentUser.role === 'section_chief' && currentUser.sectionId) {
-        setActiveSection(currentUser.sectionId);
-      } else if (!activeSection && sectionsData.length > 0) {
-        setActiveSection(sectionsData[0].id);
-      }
-    } catch (error) {
-      console.error('Error loading sections:', error);
-    }
-  };
-
-  const loadDoctors = async () => {
+  const loadDoctors = async (sectionId: string) => {
     setLoading(true);
+    setError(null);
     try {
-      let doctorsData: ExtendedDoctor[];
-      
-      if (currentUser.role === 'super_admin') {
-        // Super admin puede ver doctores de cualquier sección
-        doctorsData = activeSection 
-          ? await doctorService.getDoctorsBySection(activeSection)
-          : await doctorService.getAllDoctors();
-      } else if (currentUser.role === 'section_chief' && currentUser.sectionId) {
-        // Jefe de sección solo ve doctores de su sección
-        doctorsData = await doctorService.getDoctorsBySection(currentUser.sectionId);
-      } else {
-        doctorsData = [];
-      }
-      
-      setDoctors(doctorsData);
-    } catch (error) {
-      console.error('Error loading doctors:', error);
+      const doctorsData = await doctorService.getDoctorsBySection(sectionId);
+      setDoctors(doctorsData.filter(doc => doc.is_active));
+    } catch (err) {
+      console.error('Error loading doctors:', err);
+      setError('Failed to load doctors for this section.');
       setDoctors([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCreateDoctor = async () => {
-    try {
-      const newDoctor = await doctorService.createDoctor({
-        ...formData,
-        code: `DOC${Date.now()}`, // Generar código único
-        fullName: `${formData.firstName} ${formData.lastName}`,
-        sectionId: activeSection,
-        isActive: true,
-        joinDate: new Date().toISOString(),
-        workSchedule: {
-          doctorId: '',
-          month: new Date().toISOString().slice(0, 7),
-          shifts: [],
-          totalHours: 0,
-          isApproved: false,
-          createdBy: currentUser.id,
-          updatedBy: currentUser.id
-        }
+  const handleOpenModal = (doctor: ExtendedDoctor | null = null) => {
+    if (doctor) {
+      setEditingDoctor(doctor);
+      setFormData({
+        name: doctor.name,
+        email: doctor.email,
+        phone: doctor.phone || '',
+        license: doctor.license || '',
+        section_id: doctor.section_id,
+        specialty_ids: doctor.specialties?.map(s => s.id) || [],
+        avatar_url: doctor.avatar_url || '',
       });
+    } else {
+      setEditingDoctor(null);
+      setFormData({
+        ...DOCTOR_FORM_INITIAL_STATE,
+        section_id: Number(selectedSection)
+      });
+    }
+    setIsModalOpen(true);
+  };
 
-      setDoctors([...doctors, newDoctor]);
-      setShowCreateForm(false);
-      resetForm();
-      onDoctorChange?.();
-    } catch (error) {
-      console.error('Error creating doctor:', error);
-      alert('Error al crear el doctor');
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setEditingDoctor(null);
+    setFormData(DOCTOR_FORM_INITIAL_STATE);
+  };
+
+  const handleSpecialtyChange = (specialtyId: number) => {
+    setFormData(prev => {
+      const newSpecialtyIds = prev.specialty_ids.includes(specialtyId)
+        ? prev.specialty_ids.filter(id => id !== specialtyId)
+        : [...prev.specialty_ids, specialtyId];
+      return { ...prev, specialty_ids: newSpecialtyIds };
+    });
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        setFormData(prev => ({ ...prev, avatar_url: result }));
+      };
+      reader.readAsDataURL(file);
     }
   };
 
-  const handleUpdateDoctor = async (id: string, updates: Partial<ExtendedDoctor>) => {
+  const handleSaveDoctor = async () => {
+    if (!formData.name || !formData.section_id) {
+      setError("Name and section are required.");
+      return;
+    }
+
+    const payload = {
+      ...formData,
+      avatar_url: formData.avatar_url || generateDefaultAvatar(formData.name),
+    };
+
     try {
-      const updatedDoctor = await doctorService.updateDoctor(id, updates);
-      setDoctors(doctors.map(doc => doc.id === id ? updatedDoctor : doc));
-      setIsEditing(null);
+      if (editingDoctor) {
+        await doctorService.updateDoctor(editingDoctor.id, payload);
+      } else {
+        await doctorService.createDoctor(payload);
+      }
+      
+      handleCloseModal();
+      loadDoctors(selectedSection);
       onDoctorChange?.();
-    } catch (error) {
-      console.error('Error updating doctor:', error);
-      alert('Error al actualizar el doctor');
+
+    } catch (err) {
+      console.error('Error saving doctor:', err);
+      setError((err as Error).message || 'Failed to save doctor.');
     }
   };
 
-  const handleDeactivateDoctor = async (id: string) => {
-    if (confirm('¿Está seguro de desactivar este doctor? Podrá reactivarlo posteriormente.')) {
+  const handleDeactivate = async (doctorId: number) => {
+    if (window.confirm('Are you sure you want to deactivate this doctor?')) {
       try {
-        await doctorService.deactivateDoctor(id);
-        setDoctors(doctors.map(doc => 
-          doc.id === id ? { ...doc, isActive: false } : doc
-        ));
+        await doctorService.deactivateDoctor(doctorId);
+        loadDoctors(selectedSection);
         onDoctorChange?.();
-      } catch (error) {
-        console.error('Error deactivating doctor:', error);
-        alert('Error al desactivar el doctor');
+      } catch (err) {
+        console.error('Error deactivating doctor:', err);
+        setError('Failed to deactivate doctor.');
       }
     }
   };
 
-  const handleReactivateDoctor = async (id: string) => {
-    try {
-      await doctorService.reactivateDoctor(id);
-      setDoctors(doctors.map(doc => 
-        doc.id === id ? { ...doc, isActive: true } : doc
-      ));
-      onDoctorChange?.();
-    } catch (error) {
-      console.error('Error reactivating doctor:', error);
-      alert('Error al reactivar el doctor');
-    }
-  };
-
-  const resetForm = () => {
-    setFormData({
-      firstName: '',
-      lastName: '',
-      documentType: 'DNI',
-      documentNumber: '',
-      profession: '',
-      licenseNumber: '',
-      email: '',
-      phone: '',
-      photo: '/default-avatar.png',
-      sectionId: '',
-      isChief: false
-    });
-  };
-
-  const canManageSection = (sectionId: string) => {
-    return userService.hasPermission(currentUser, 'doctors', 'update', sectionId);
-  };
-
-  const activeDoctors = doctors.filter(doc => doc.isActive);
-  const inactiveDoctors = doctors.filter(doc => !doc.isActive);
-  const selectedSectionData = sections.find(s => s.id === activeSection);
-
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
+    <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Gestión de Doctores</h2>
-          <p className="text-gray-600">
-            {selectedSectionData?.displayName || 'Todas las secciones'}
-          </p>
-        </div>
-        
-        {canManageSection(activeSection) && (
-          <button
-            onClick={() => setShowCreateForm(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Agregar Doctor
-          </button>
-        )}
+        <h3 className="text-xl font-bold">Gestión de Doctores</h3>
+        <Button onClick={() => handleOpenModal()}>
+          <Plus className="mr-2 h-4 w-4" /> Agregar Doctor
+        </Button>
       </div>
 
-      {/* Selector de sección (solo para super admin) */}
-      {currentUser.role === 'super_admin' && (
-        <div className="bg-white p-4 rounded-lg shadow-sm border">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Sección a gestionar:
-          </label>
-          <select
-            value={activeSection}
-            onChange={(e) => setActiveSection(e.target.value)}
-            className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">Todas las secciones</option>
-            {sections.map(section => (
-              <option key={section.id} value={section.id}>
-                {section.displayName}
-              </option>
-            ))}
-          </select>
+      {error && (
+        <div className="flex items-center p-4 bg-red-50 text-red-700 border border-red-200 rounded-lg">
+          <AlertTriangle className="mr-2 h-5 w-5" />
+          <p>{error}</p>
         </div>
       )}
 
-      {/* Estadísticas rápidas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-lg shadow-sm border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Doctores Activos</p>
-              <p className="text-2xl font-semibold text-green-600">{activeDoctors.length}</p>
-            </div>
-            <Users className="w-8 h-8 text-green-600" />
-          </div>
+      {loading ? (
+        <div className="text-center py-12">Cargando doctores...</div>
+      ) : doctors.length === 0 ? (
+        <div className="text-center py-12 text-gray-500">
+          <p>No hay doctores para esta sección.</p>
+          <p className="text-sm">Click en "Agregar Doctor" para empezar.</p>
         </div>
-        
-        <div className="bg-white p-4 rounded-lg shadow-sm border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Doctores Inactivos</p>
-              <p className="text-2xl font-semibold text-gray-600">{inactiveDoctors.length}</p>
-            </div>
-            <Clock className="w-8 h-8 text-gray-600" />
-          </div>
-        </div>
-        
-        <div className="bg-white p-4 rounded-lg shadow-sm border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Jefes de Sección</p>
-              <p className="text-2xl font-semibold text-blue-600">
-                {doctors.filter(doc => doc.isChief && doc.isActive).length}
-              </p>
-            </div>
-            <UserCheck className="w-8 h-8 text-blue-600" />
-          </div>
-        </div>
-        
-        <div className="bg-white p-4 rounded-lg shadow-sm border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Total Doctores</p>
-              <p className="text-2xl font-semibold text-gray-900">{doctors.length}</p>
-            </div>
-            <Users className="w-8 h-8 text-gray-900" />
-          </div>
-        </div>
-      </div>
-
-      {/* Lista de doctores activos */}
-      <div className="bg-white rounded-lg shadow-sm border">
-        <div className="p-4 border-b">
-          <h3 className="text-lg font-semibold text-gray-900">Doctores Activos</h3>
-        </div>
-        
-        {loading ? (
-          <div className="p-8 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-2 text-gray-600">Cargando doctores...</p>
-          </div>
-        ) : activeDoctors.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
-            No hay doctores activos en esta sección
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Doctor</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Documento</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Profesión</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rol</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Contacto</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {activeDoctors.map((doctor) => (
-                  <tr key={doctor.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center">
-                        <img
-                          src={doctor.photo}
-                          alt={doctor.fullName}
-                          className="w-10 h-10 rounded-full object-cover mr-3"
-                          onError={(e) => {
-                            e.currentTarget.src = '/default-avatar.png';
-                          }}
-                        />
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">{doctor.fullName}</div>
-                          <div className="text-sm text-gray-500">Código: {doctor.code}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-sm text-gray-900">{doctor.documentType}</div>
-                      <div className="text-sm text-gray-500">{doctor.documentNumber}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-sm text-gray-900">{doctor.profession}</div>
-                      <div className="text-sm text-gray-500">Lic. {doctor.licenseNumber}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex px-2 py-1 text-xs rounded-full ${
-                        doctor.isChief 
-                          ? 'bg-purple-100 text-purple-800' 
-                          : 'bg-green-100 text-green-800'
-                      }`}>
-                        {doctor.isChief ? 'Jefe de Sección' : 'Doctor'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-sm text-gray-900">{doctor.email}</div>
-                      <div className="text-sm text-gray-500">{doctor.phone}</div>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {canManageSection(doctor.sectionId) && (
-                        <div className="flex justify-end space-x-2">
-                          <button
-                            onClick={() => setIsEditing(doctor.id)}
-                            className="text-blue-600 hover:text-blue-800"
-                            title="Editar"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDeactivateDoctor(doctor.id)}
-                            className="text-red-600 hover:text-red-800"
-                            title="Desactivar"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Lista de doctores inactivos (si hay) */}
-      {inactiveDoctors.length > 0 && (
-        <div className="bg-white rounded-lg shadow-sm border">
-          <div className="p-4 border-b">
-            <h3 className="text-lg font-semibold text-gray-900">Doctores Inactivos</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Doctor</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Documento</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha Ingreso</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {inactiveDoctors.map((doctor) => (
-                  <tr key={doctor.id} className="hover:bg-gray-50 opacity-60">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center">
-                        <img
-                          src={doctor.photo}
-                          alt={doctor.fullName}
-                          className="w-10 h-10 rounded-full object-cover mr-3 grayscale"
-                        />
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">{doctor.fullName}</div>
-                          <div className="text-sm text-gray-500">Código: {doctor.code}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-sm text-gray-900">{doctor.documentType}</div>
-                      <div className="text-sm text-gray-500">{doctor.documentNumber}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-sm text-gray-500">
-                        {new Date(doctor.joinDate).toLocaleDateString()}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {canManageSection(doctor.sectionId) && (
-                        <button
-                          onClick={() => handleReactivateDoctor(doctor.id)}
-                          className="text-green-600 hover:text-green-800"
-                          title="Reactivar"
-                        >
-                          <RotateCcw className="w-4 h-4" />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {doctors.map(doctor => (
+            <Card key={doctor.id}>
+              <CardContent className="p-4 flex flex-col items-center text-center">
+                <img
+                  src={doctor.avatar_url || generateDefaultAvatar(doctor.name)}
+                  alt={doctor.name}
+                  className="w-24 h-24 rounded-full object-cover border-4 border-gray-100 mb-4"
+                />
+                <h4 className="font-bold text-lg truncate">{doctor.name}</h4>
+                <p className="text-sm text-gray-600 truncate">{doctor.specialties?.map(s => s.name).join(', ') || 'Sin especialidad'}</p>
+                <p className="text-xs text-gray-500 mt-1">{doctor.email}</p>
+                <div className="flex gap-2 mt-4">
+                  <Button variant="outline" size="sm" onClick={() => handleOpenModal(doctor)}>
+                    <Edit className="h-4 w-4 mr-1" /> Editar
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={() => handleDeactivate(doctor.id)}>
+                    <Trash className="h-4 w-4 mr-1" /> Desactivar
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       )}
 
-      {/* Modal de crear doctor */}
-      {showCreateForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <h3 className="text-lg font-semibold mb-4">Agregar Nuevo Doctor</h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Nombres *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.firstName}
-                    onChange={(e) => setFormData({...formData, firstName: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingDoctor ? 'Editar Doctor' : 'Agregar Nuevo Doctor'}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-6 py-4">
+            
+            <div className="flex items-center gap-4">
+                <div className="relative">
+                    <img
+                        src={formData.avatar_url || generateDefaultAvatar(formData.name || 'A')}
+                        alt="Avatar"
+                        className="w-24 h-24 rounded-full object-cover border-2"
+                    />
+                    <label htmlFor="photo-upload" className="absolute -bottom-2 -right-2 bg-white p-1 rounded-full border cursor-pointer hover:bg-gray-100">
+                        <Upload className="h-4 w-4 text-gray-600" />
+                        <input id="photo-upload" type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+                    </label>
                 </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Apellidos *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.lastName}
-                    onChange={(e) => setFormData({...formData, lastName: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
+                <div className="flex-1 space-y-1">
+                    <Label htmlFor="name">Nombre Completo</Label>
+                    <Input id="name" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} placeholder="Dr. Juan Pérez" />
                 </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Tipo de Documento *
-                  </label>
-                  <select
-                    value={formData.documentType}
-                    onChange={(e) => setFormData({...formData, documentType: e.target.value as any})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="DNI">DNI</option>
-                    <option value="CEX">CEX</option>
-                    <option value="PAS">PAS</option>
-                  </select>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Número de Documento *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.documentNumber}
-                    onChange={(e) => setFormData({...formData, documentNumber: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Profesión *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.profession}
-                    onChange={(e) => setFormData({...formData, profession: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Número de Licencia *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.licenseNumber}
-                    onChange={(e) => setFormData({...formData, licenseNumber: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Teléfono
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.phone}
-                    onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              
-              <div className="mt-4">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={formData.isChief}
-                    onChange={(e) => setFormData({...formData, isChief: e.target.checked})}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">
-                    Es jefe de sección
-                  </span>
-                </label>
-              </div>
-              
-              <div className="flex justify-end space-x-3 mt-6">
-                <button
-                  onClick={() => {
-                    setShowCreateForm(false);
-                    resetForm();
-                  }}
-                  className="px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleCreateDoctor}
-                  disabled={!formData.firstName || !formData.lastName || !formData.documentNumber}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Crear Doctor
-                </button>
-              </div>
             </div>
+
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <Label htmlFor="email">Email</Label>
+                    <Input id="email" type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} placeholder="juan.perez@example.com" />
+                </div>
+                <div>
+                    <Label htmlFor="phone">Teléfono</Label>
+                    <Input id="phone" value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} placeholder="+54 9 11 1234-5678" />
+                </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <Label htmlFor="license">Nro. de Licencia</Label>
+                    <Input id="license" value={formData.license} onChange={(e) => setFormData({...formData, license: e.target.value})} placeholder="A-12345" />
+                </div>
+                <div>
+                    <Label htmlFor="section">Sección</Label>
+                    <Select
+                        value={formData.section_id?.toString()}
+                        onValueChange={(value) => setFormData({...formData, section_id: Number(value)})}
+                    >
+                        <SelectTrigger>
+                        <SelectValue placeholder="Seleccione una sección" />
+                        </SelectTrigger>
+                        <SelectContent>
+                        {sections.map(sec => (
+                            <SelectItem key={sec.id} value={sec.id.toString()}>
+                            {sec.name}
+                            </SelectItem>
+                        ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+            </div>
+
+            <div>
+              <Label>Especialidades</Label>
+              <Card className="mt-2">
+                <CardContent className="p-4 grid grid-cols-2 md:grid-cols-3 gap-4 max-h-48 overflow-y-auto">
+                  {specialties.map(spec => (
+                    <div key={spec.id} className="flex items-center space-x-2">
+                      <Checkbox 
+                        id={`spec-${spec.id}`} 
+                        checked={formData.specialty_ids.includes(spec.id)}
+                        onCheckedChange={() => handleSpecialtyChange(spec.id)}
+                      />
+                      <Label htmlFor={`spec-${spec.id}`} className="font-normal">{spec.name}</Label>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
+
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseModal}>Cancelar</Button>
+            <Button onClick={handleSaveDoctor}>
+                {editingDoctor ? 'Guardar Cambios' : 'Crear Doctor'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

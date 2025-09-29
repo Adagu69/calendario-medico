@@ -4,6 +4,24 @@ import pool from '../database/connection';
 
 const router = express.Router();
 
+const normalizeTimeSlotIds = (value: unknown): number[] => {
+  if (Array.isArray(value)) {
+    return (value as Array<string | number>)
+      .map((id) => Number(id))
+      .filter((id) => !Number.isNaN(id));
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .replace(/[{}]/g, '')
+      .split(',')
+      .map((id) => Number(id.trim()))
+      .filter((id) => !Number.isNaN(id));
+  }
+
+  return [];
+};
+
 // Middleware para validar errores
 const handleValidationErrors = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const errors = validationResult(req);
@@ -29,7 +47,7 @@ router.get('/doctor/:doctor_id/:month', [
 
     // Verify doctor exists
     const doctorCheck = await pool.query('SELECT id FROM sgh_doctors WHERE id = $1', [doctor_id]);
-    if (doctorCheck.rowCount === 0) {
+    if (!doctorCheck || doctorCheck.rowCount === 0) {
       return res.status(404).json({ success: false, message: 'Doctor no encontrado' });
     }
 
@@ -39,7 +57,7 @@ router.get('/doctor/:doctor_id/:month', [
       [doctor_id, year, monthNum]
     );
 
-    if (monthResult.rowCount === 0) {
+    if (!monthResult || monthResult.rowCount === 0) {
       return res.status(404).json({ success: false, message: 'Horario no encontrado' });
     }
 
@@ -47,19 +65,29 @@ router.get('/doctor/:doctor_id/:month', [
 
     // Fetch time slots for the month
     const timeSlotsResult = await pool.query('SELECT * FROM sgh_time_slots WHERE month_id = $1', [scheduleMonth.id]);
-    const timeSlotsMap = new Map(timeSlotsResult.rows.map((ts: any) => [ts.id, ts]));
+    const timeSlots = timeSlotsResult.rows.map((ts: any) => ({
+      ...ts,
+      label: ts.name,
+    }));
+    const timeSlotsMap = new Map(timeSlots.map((ts: any) => [String(ts.id), ts]));
 
     // Fetch days with assigned slots
     const daysResult = await pool.query('SELECT * FROM sgh_month_days WHERE month_id = $1', [scheduleMonth.id]);
 
-    const shifts = daysResult.rows.map((day: any) => ({
-      date: `${year}-${String(monthNum).padStart(2, '0')}-${String(day.day).padStart(2, '0')}`,
-      time_slot_ids: day.time_slot_ids,
-      notes: day.notes,
-      slots_details: day.time_slot_ids.map((id: string) => timeSlotsMap.get(id)).filter(Boolean)
-    }));
+    const shifts = daysResult.rows.map((day: any) => {
+      const normalizedIds = normalizeTimeSlotIds(day.time_slot_ids);
 
-    res.json({ success: true, data: { ...scheduleMonth, shifts } });
+      return {
+        date: `${year}-${String(monthNum).padStart(2, '0')}-${String(day.day).padStart(2, '0')}`,
+        time_slot_ids: normalizedIds,
+        notes: day.notes,
+        slots_details: normalizedIds
+          .map((id: number) => timeSlotsMap.get(String(id)))
+          .filter(Boolean),
+      };
+    });
+
+    res.json({ success: true, data: { ...scheduleMonth, time_slots: timeSlots, shifts } });
   } catch (error) {
     console.error('Error fetching doctor schedule:', error);
     res.status(500).json({ success: false, message: 'Error al obtener horario del doctor' });
@@ -78,7 +106,7 @@ router.get('/section/:section_id/:month', [
 
     // Verify section exists
     const sectionCheck = await pool.query('SELECT id FROM sgh_sections WHERE id = $1', [section_id]);
-    if (sectionCheck.rowCount === 0) {
+    if (!sectionCheck || sectionCheck.rowCount === 0) {
       return res.status(404).json({ success: false, message: 'Sección no encontrada' });
     }
 
@@ -107,26 +135,26 @@ router.get('/section/:section_id/:month', [
 router.post('/', [
   body('doctor_id').notEmpty().withMessage('ID de doctor requerido'),
   body('month').matches(/^\d{4}-\d{2}$/).withMessage('Formato de mes inválido (YYYY-MM)'),
-  body('shifts').isArray().withMessage('Los turnos deben ser un array'),
-  body('specialty_id').notEmpty().withMessage('ID de especialidad requerido'),
+  body('time_slots').isArray().withMessage('Los time_slots deben ser un array'),
+  body('section_id').notEmpty().withMessage('ID de sección requerido'),
   handleValidationErrors
 ], async (req: express.Request, res: express.Response) => {
   try {
-    const { doctor_id, month, shifts, is_approved, created_by, updated_by, specialty_id } = req.body;
+    const { doctor_id, month, time_slots, shifts, is_approved, created_by, updated_by, section_id } = req.body;
     const [year, monthNum] = month.split('-').map(Number);
 
-    // Verify doctor and specialty exist
+    // Verify doctor and section exist
     const doctorCheck = await pool.query('SELECT id FROM sgh_doctors WHERE id = $1', [doctor_id]);
-    if (doctorCheck.rowCount === 0) {
+    if (!doctorCheck || doctorCheck.rowCount === 0) {
       return res.status(404).json({ success: false, message: 'Doctor no encontrado' });
     }
-    const specialtyCheck = await pool.query('SELECT id FROM sgh_specialties WHERE id = $1', [specialty_id]);
-    if (specialtyCheck.rowCount === 0) {
-      return res.status(404).json({ success: false, message: 'Especialidad no encontrada' });
+    const sectionCheck = await pool.query('SELECT id FROM sgh_sections WHERE id = $1', [section_id]);
+    if (!sectionCheck || sectionCheck.rowCount === 0) {
+      return res.status(404).json({ success: false, message: 'Sección no encontrada' });
     }
 
     // Check for existing month schedule
-    let monthResult = await pool.query(
+    const monthResult = await pool.query(
       'SELECT id, status FROM sgh_months WHERE doctor_id = $1 AND year = $2 AND month = $3',
       [doctor_id, year, monthNum]
     );
@@ -134,17 +162,19 @@ router.post('/', [
     let monthId: string;
     let currentStatus: string;
 
-    if (monthResult.rowCount > 0) {
-      monthId = monthResult.rows[0].id;
-      currentStatus = monthResult.rows[0].status;
+    const existingMonth = monthResult?.rowCount && monthResult.rowCount > 0 ? monthResult.rows[0] : null;
+
+    if (existingMonth) {
+      monthId = existingMonth.id;
+      currentStatus = existingMonth.status;
       // If already published, prevent direct update via this route
       if (currentStatus === 'published') {
         return res.status(400).json({ success: false, message: 'No se puede modificar un horario ya publicado. Utilice la ruta de cambios de calendario.' });
       }
       // Update existing month entry
       await pool.query(
-        'UPDATE sgh_months SET specialty_id = $1, is_approved = $2, updated_by = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
-        [specialty_id, is_approved || false, updated_by || 'system', monthId]
+        'UPDATE sgh_months SET section_id = $1, is_approved = $2, updated_by = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
+        [section_id, is_approved || false, updated_by || 1, monthId]
       );
       // Clear existing time slots and days for this month
       await pool.query('DELETE FROM sgh_time_slots WHERE month_id = $1', [monthId]);
@@ -152,27 +182,32 @@ router.post('/', [
     } else {
       // Create new month entry
       const newMonthResult = await pool.query(
-        'INSERT INTO sgh_months (doctor_id, specialty_id, year, month, is_approved, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-        [doctor_id, specialty_id, year, monthNum, is_approved || false, created_by || 'system', updated_by || 'system']
+        'INSERT INTO sgh_months (doctor_id, section_id, year, month, is_approved, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+        [doctor_id, section_id, year, monthNum, is_approved || false, created_by || 1, updated_by || 1]
       );
       monthId = newMonthResult.rows[0].id;
     }
 
-    // Insert new time slots and days
-    for (const shift of shifts) {
-      // Insert time slot
+    const clientShiftIdToDbId = new Map<string, number>();
+
+    for (const timeSlot of time_slots) {
       const timeSlotResult = await pool.query(
         'INSERT INTO sgh_time_slots (month_id, name, start_time, end_time, color) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-        [monthId, shift.name, shift.start_time, shift.end_time, shift.color]
+        [monthId, timeSlot.name, timeSlot.start_time, timeSlot.end_time, timeSlot.color]
       );
-      const timeSlotId = timeSlotResult.rows[0].id;
+      clientShiftIdToDbId.set(timeSlot.id, timeSlotResult.rows[0].id);
+    }
 
-      // Insert day entry
-      const day = new Date(shift.date).getDate();
-      await pool.query(
-        'INSERT INTO sgh_month_days (month_id, day, time_slot_ids, notes) VALUES ($1, $2, ARRAY[$3]::int[], $4)',
-        [monthId, day, timeSlotId, shift.notes || null]
-      );
+    for (const shift of shifts) {
+        const day = new Date(shift.date).getDate();
+        const dbTimeSlotIds = shift.time_slot_ids.map((client_id: string) => clientShiftIdToDbId.get(client_id)).filter(Boolean);
+
+        if (dbTimeSlotIds.length > 0) {
+            await pool.query(
+                'INSERT INTO sgh_month_days (month_id, day, time_slot_ids, notes) VALUES ($1, $2, $3, $4) ON CONFLICT (month_id, day) DO UPDATE SET time_slot_ids = EXCLUDED.time_slot_ids, notes = EXCLUDED.notes, updated_at = CURRENT_TIMESTAMP',
+                [monthId, day, dbTimeSlotIds, shift.notes || null]
+            );
+        }
     }
 
     res.status(200).json({ success: true, message: 'Horario guardado exitosamente' });
@@ -194,27 +229,35 @@ router.post('/calendar-changes', [
     const [year, monthNum] = month.split('-').map(Number);
 
     // Verify doctor exists
-    const doctorCheck = await pool.query('SELECT id FROM sgh_doctors WHERE id = $1', [doctor_id]);
-    if (doctorCheck.rowCount === 0) {
+    const doctorCheck = await pool.query('SELECT id, section_id FROM sgh_doctors WHERE id = $1', [doctor_id]);
+    if (!doctorCheck || doctorCheck.rowCount === 0) {
       return res.status(404).json({ success: false, message: 'Doctor no encontrado' });
     }
+    const section_id = doctorCheck.rows[0].section_id;
 
     // Fetch existing month schedule
-    const monthResult = await pool.query(
+    let monthResult = await pool.query(
       'SELECT id, status FROM sgh_months WHERE doctor_id = $1 AND year = $2 AND month = $3',
       [doctor_id, year, monthNum]
     );
 
-    if (monthResult.rowCount === 0) {
-      return res.status(404).json({ success: false, message: 'Horario no encontrado para aplicar cambios' });
-    }
+    let scheduleMonthId: string;
 
-    const scheduleMonthId = monthResult.rows[0].id;
-    const currentStatus = monthResult.rows[0].status;
+    if (!monthResult || monthResult.rowCount === 0) {
+      // If schedule doesn't exist, create it
+      const newMonthResult = await pool.query(
+        'INSERT INTO sgh_months (doctor_id, section_id, year, month, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+        [doctor_id, section_id, year, monthNum, updated_by || 1, updated_by || 1]
+      );
+      scheduleMonthId = newMonthResult.rows[0].id;
+    } else {
+      scheduleMonthId = monthResult.rows[0].id;
+      const currentStatus = monthResult.rows[0].status;
 
-    // Prevent changes if schedule is published (unless specific permission/flow)
-    if (currentStatus === 'published') {
-      return res.status(400).json({ success: false, message: 'No se pueden aplicar cambios a un horario ya publicado directamente.' });
+      // Prevent changes if schedule is published (unless specific permission/flow)
+      if (currentStatus === 'published') {
+        return res.status(400).json({ success: false, message: 'No se pueden aplicar cambios a un horario ya publicado directamente.' });
+      }
     }
 
     // Apply changes to sgh_month_days
@@ -223,8 +266,8 @@ router.post('/calendar-changes', [
       if (change.time_slot_ids && change.time_slot_ids.length > 0) {
         // Update or insert day entry
         await pool.query(
-          'INSERT INTO sgh_month_days (month_id, day, time_slot_ids, notes) VALUES ($1, $2, ARRAY[$3]::int[], $4) ON CONFLICT (month_id, day) DO UPDATE SET time_slot_ids = EXCLUDED.time_slot_ids, notes = EXCLUDED.notes, updated_at = CURRENT_TIMESTAMP',
-          [scheduleMonthId, day, change.time_slot_ids[0], change.notes || null] // Assuming single time_slot_id for now
+          'INSERT INTO sgh_month_days (month_id, day, time_slot_ids, notes) VALUES ($1, $2, $3, $4) ON CONFLICT (month_id, day) DO UPDATE SET time_slot_ids = EXCLUDED.time_slot_ids, notes = EXCLUDED.notes, updated_at = CURRENT_TIMESTAMP',
+          [scheduleMonthId, day, change.time_slot_ids, change.notes || null]
         );
       } else {
         // If time_slot_ids is empty, delete the day entry
@@ -233,7 +276,7 @@ router.post('/calendar-changes', [
     }
 
     // Update sgh_months updated_by and updated_at
-    await pool.query('UPDATE sgh_months SET updated_by = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [updated_by || 'system', scheduleMonthId]);
+    await pool.query('UPDATE sgh_months SET updated_by = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [updated_by || 1, scheduleMonthId]);
 
     res.status(200).json({ success: true, message: 'Cambios de calendario guardados exitosamente' });
   } catch (error) {
@@ -251,7 +294,7 @@ router.put('/:id/approve', [
     const { id } = req.params;
     const result = await pool.query('UPDATE sgh_months SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *', ['published', id]);
 
-    if (result.rowCount === 0) {
+    if (!result || result.rowCount === 0) {
       return res.status(404).json({ success: false, message: 'Horario no encontrado' });
     }
     res.json({ success: true, data: result.rows[0], message: 'Horario aprobado y publicado correctamente' });

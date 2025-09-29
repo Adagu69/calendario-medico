@@ -12,6 +12,8 @@ import doctorsRoutes from './routes/doctors';
 import schedulesRoutes from './routes/schedules';
 import settingsRoutes from './routes/settings';
 import usersRoutes from './routes/users';
+import specialtiesRoutes from './routes/specialties';
+import reportsRoutes from './routes/reports';
 
 // Load environment variables
 dotenv.config();
@@ -62,6 +64,8 @@ app.use('/api/doctors', doctorsRoutes);
 app.use('/api/schedules', schedulesRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/specialties', specialtiesRoutes);
+app.use('/api/reports', reportsRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

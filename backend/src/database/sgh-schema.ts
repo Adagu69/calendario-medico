@@ -21,6 +21,7 @@ export const createTables = async () => {
         phone VARCHAR(50),
         role VARCHAR(50) NOT NULL CHECK (role IN ('admin', 'gerencia', 'jefe', 'doctor')),
         is_active BOOLEAN DEFAULT true,
+        last_login TIMESTAMP, -- <-- COLUMNA AÑADIDA
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -50,11 +51,10 @@ export const createTables = async () => {
       )
     `);
     
-    // Specialties table (linked to sections)
+    // Specialties table
     await client.query(`
       CREATE TABLE IF NOT EXISTS sgh_specialties (
         id SERIAL PRIMARY KEY,
-        section_id INTEGER REFERENCES sgh_sections(id) ON DELETE CASCADE,
         name VARCHAR(255) NOT NULL,
         description TEXT,
         is_active BOOLEAN DEFAULT true,
@@ -68,7 +68,7 @@ export const createTables = async () => {
       CREATE TABLE IF NOT EXISTS sgh_doctors (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES sgh_users(id) ON DELETE SET NULL,
-        specialty_id INTEGER REFERENCES sgh_specialties(id) ON DELETE CASCADE,
+        section_id INTEGER REFERENCES sgh_sections(id) ON DELETE CASCADE,
         name VARCHAR(255) NOT NULL,
         email VARCHAR(255) NOT NULL,
         phone VARCHAR(50),
@@ -79,23 +79,36 @@ export const createTables = async () => {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // Doctor-Specialty join table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sgh_doctor_specialties (
+        doctor_id INTEGER REFERENCES sgh_doctors(id) ON DELETE CASCADE,
+        specialty_id INTEGER REFERENCES sgh_specialties(id) ON DELETE CASCADE,
+        PRIMARY KEY (doctor_id, specialty_id)
+      )
+    `);
+    
+    // ... (El resto del archivo no necesita cambios)
     
     // Months table (main entity for month management)
     await client.query(`
       CREATE TABLE IF NOT EXISTS sgh_months (
         id SERIAL PRIMARY KEY,
         doctor_id INTEGER REFERENCES sgh_doctors(id) ON DELETE CASCADE,
-        specialty_id INTEGER REFERENCES sgh_specialties(id) ON DELETE CASCADE,
+        section_id INTEGER REFERENCES sgh_sections(id) ON DELETE CASCADE,
         year INTEGER NOT NULL,
         month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
         status VARCHAR(20) DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+        is_approved BOOLEAN DEFAULT false,
         theme_config JSONB DEFAULT '{}',
         published_at TIMESTAMP,
         published_by INTEGER REFERENCES sgh_users(id),
         created_by INTEGER REFERENCES sgh_users(id) NOT NULL,
+        updated_by INTEGER REFERENCES sgh_users(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(doctor_id, specialty_id, year, month)
+        UNIQUE(doctor_id, section_id, year, month)
       )
     `);
     
@@ -107,7 +120,7 @@ export const createTables = async () => {
         name VARCHAR(255) NOT NULL,
         start_time TIME NOT NULL,
         end_time TIME NOT NULL,
-        color VARCHAR(7) NOT NULL,
+        color VARCHAR(255) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT check_time_order CHECK (start_time < end_time)
@@ -183,7 +196,7 @@ export const createTables = async () => {
     `);
     
     const tables = [
-      'sgh_users', 'sgh_sections', 'sgh_specialties', 'sgh_doctors', 
+      'sgh_users', 'sgh_sections', 'sgh_specialties', 'sgh_doctors', 'sgh_doctor_specialties',
       'sgh_months', 'sgh_time_slots', 'sgh_month_days', 'sgh_change_requests'
     ];
     
@@ -214,7 +227,7 @@ export const dropTables = async () => {
     
     const tables = [
       'sgh_audit_log', 'sgh_change_requests', 'sgh_month_days', 'sgh_time_slots',
-      'sgh_months', 'sgh_doctors', 'sgh_specialties', 'sgh_user_sections', 
+      'sgh_months', 'sgh_doctor_specialties', 'sgh_doctors', 'sgh_specialties', 'sgh_user_sections', 
       'sgh_sections', 'sgh_users'
     ];
     

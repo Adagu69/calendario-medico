@@ -119,6 +119,7 @@ router.put('/:id',
     body('last_name').optional().notEmpty().withMessage('El apellido no puede estar vacío'),
     body('role').optional().isIn(['admin', 'gerencia', 'jefe', 'doctor']).withMessage('Rol inválido'),
     body('is_active').optional().isBoolean().withMessage('El estado de activación debe ser un booleano'),
+    body('password').optional({ checkFalsy: true }).isLength({ min: 6 }).withMessage('La contraseña debe tener al menos 6 caracteres'),
   ],
   async (req: express.Request, res: express.Response) => {
     const errors = validationResult(req);
@@ -131,7 +132,7 @@ router.put('/:id',
     }
 
     const { id } = req.params;
-    const { username, email, first_name, last_name, role, is_active } = req.body;
+    const { username, email, first_name, last_name, role, is_active, password } = req.body;
 
     try {
       // Verificar si el usuario existe
@@ -171,6 +172,13 @@ router.put('/:id',
        if (is_active !== undefined) {
         fields.push(`is_active = $${paramCount++}`);
         values.push(is_active);
+      }
+
+      if (password && password.trim().length > 0) {
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+        fields.push(`password = $${paramCount++}`);
+        values.push(hashedPassword);
       }
 
       if (fields.length === 0) {

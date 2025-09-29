@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import pool from '../database/connection';
 import { verifyToken, requireAdmin } from '../middleware/auth';
@@ -6,7 +6,7 @@ import { verifyToken, requireAdmin } from '../middleware/auth';
 const router = express.Router();
 
 // GET /api/sections - Get all sections
-router.get('/', verifyToken, async (req, res) => {
+router.get('/', verifyToken, async (req: Request, res: Response) => {
   try {
     const result = await pool.query('SELECT * FROM sgh_sections ORDER BY name');
     res.json({ success: true, data: result.rows });
@@ -24,7 +24,7 @@ router.post('/',
     body('name').notEmpty().withMessage('El nombre de la sección es requerido'),
     body('description').optional().isString(),
   ],
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ success: false, error: 'Datos inválidos', details: errors.array() });
@@ -54,7 +54,7 @@ router.put('/:id',
     body('description').optional().isString(),
     body('is_active').isBoolean().withMessage('El estado debe ser un valor booleano'),
   ],
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ success: false, error: 'Datos inválidos', details: errors.array() });
@@ -82,7 +82,7 @@ router.put('/:id',
 );
 
 // DELETE /api/sections/:id - Delete a section
-router.delete('/:id', verifyToken, requireAdmin, async (req, res) => {
+router.delete('/:id', verifyToken, requireAdmin, async (req: Request, res: Response) => {
   const { id } = req.params;
 
   try {

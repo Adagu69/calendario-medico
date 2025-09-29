@@ -2,6 +2,8 @@ export interface Shift {
   id: string;
   label: string;
   color: string;
+  start_time: string;
+  end_time: string;
 }
 
 export interface Doctor {
@@ -83,12 +85,14 @@ export interface Appointment {
 }
 
 export interface User {
-  id: string;
+  id: number | string;
   username: string;
   email: string;
-  role: 'admin' | 'viewer';
-  specialtyAccess: string[]; // IDs de especialidades que puede ver
+  role: 'admin' | 'gerencia' | 'jefe' | 'doctor' | 'viewer';
+  specialtyAccess: string[];
   name: string;
+  section_id?: number | null;
+  section_name?: string | null;
 }
 
 export interface CalendarEvent {

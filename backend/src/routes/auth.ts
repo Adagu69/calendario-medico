@@ -1,8 +1,8 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
 import jwt from 'jsonwebtoken';
-import pool from '../database/connection'; // Importar pool de conexión
-import bcrypt from 'bcrypt'; // Importar bcrypt
+import pool from '../database/connection';
+import bcrypt from 'bcrypt';
 import { JWT_SECRET_KEY } from '../config/jwt';
 
 const router = express.Router();
@@ -11,7 +11,11 @@ const router = express.Router();
 const handleValidationErrors = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
+    return res.status(400).json({
+      success: false,
+      error: 'Datos de entrada inválidos',
+      details: errors.array()
+    });
   }
   next();
 };
@@ -19,14 +23,17 @@ const handleValidationErrors = (req: express.Request, res: express.Response, nex
 // Middleware para verificar token JWT
 const verifyToken = (req: any, res: express.Response, next: express.NextFunction) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
-  
   if (!token) {
     return res.status(401).json({ message: 'Token de acceso requerido' });
   }
-  
+
   try {
     const decoded = jwt.verify(token, JWT_SECRET_KEY) as any;
-    req.user = decoded;
+    req.user = {
+      id: decoded.userId ?? decoded.id,
+      role: decoded.role,
+      section_id: decoded.sectionId ?? decoded.section_id ?? null
+    };
     next();
   } catch (error) {
     return res.status(401).json({ message: 'Token inválido' });
@@ -45,8 +52,7 @@ router.post('/login', [
 ], async (req: express.Request, res: express.Response) => {
   try {
     const { identifier, password } = req.body;
-    
-    // Buscar usuario por email o username en la base de datos
+  
     const result = await pool.query(
       'SELECT * FROM sgh_users WHERE (email = $1 OR username = $1) AND is_active = true',
       [identifier]
@@ -55,52 +61,65 @@ router.post('/login', [
     const user = result.rows[0];
     
     if (!user) {
-      return res.status(401).json({ message: 'Credenciales inválidas' });
+      return res.status(401).json({ success: false, error: 'Credenciales inválidas' });
     }
     
-    // Verificar contraseña
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
-      // Fallback a texto plano para usuarios existentes
-      if (password !== user.password) {
-          return res.status(401).json({ message: 'Credenciales inválidas' });
-      }
+      return res.status(401).json({ success: false, error: 'Credenciales inválidas' });
     }
+
+    const sectionResult = await pool.query(
+      `SELECT us.section_id, s.name AS section_name
+       FROM sgh_user_sections us
+       LEFT JOIN sgh_sections s ON s.id = us.section_id
+       WHERE us.user_id = $1
+       ORDER BY us.assigned_at DESC
+       LIMIT 1`,
+      [user.id]
+    );
+
+    const sectionId: number | null = sectionResult.rows[0]?.section_id ?? null;
+    const sectionName: string | null = sectionResult.rows[0]?.section_name ?? null;
+
+    const userPayloadForFrontend = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      name: `${user.first_name} ${user.last_name}`,
+      role: user.role,
+      section_id: sectionId,
+      section_name: sectionName,
+      specialtyAccess: sectionId ? [String(sectionId)] : [],
+    };
+
+    const tokenPayload = {
+      userId: user.id,
+      role: user.role,
+      sectionId
+    };
     
-    // Generar token JWT
     const token = jwt.sign(
-      userResponse, // Sign the full user object
+      tokenPayload,
       JWT_SECRET_KEY,
       { expiresIn: '24h' }
     );
     
-    // Actualizar último login
-    await pool.query('UPDATE sgh_users SET last_login = NOW() WHERE id = $1', [user.id]);
+     await pool.query('UPDATE sgh_users SET last_login = NOW() WHERE id = $1', [user.id]);
     
-    // Remover información sensible antes de enviar
-    const userResponse = {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      firstName: user.first_name,
-      lastName: user.last_name,
-      role: user.role,
-      // sectionId: user.sectionId,
-      lastLogin: new Date().toISOString()
-    };
-    
-    res.json({
+  res.json({
       success: true,
       message: 'Inicio de sesión exitoso',
       data: {
-        user: userResponse,
+        user: userPayloadForFrontend,
         token
       }
     });
+
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ message: 'Error en el servidor' });
+    res.status(500).json({ success: false, error: 'Error en el servidor' });
   }
 });
 
@@ -113,7 +132,20 @@ router.get('/me', verifyToken, async (req: any, res: express.Response) => {
     if (!user) {
       return res.status(404).json({ message: 'Usuario no encontrado' });
     }
-    
+
+    const sectionResult = await pool.query(
+      `SELECT us.section_id, s.name AS section_name
+       FROM sgh_user_sections us
+       LEFT JOIN sgh_sections s ON s.id = us.section_id
+       WHERE us.user_id = $1
+       ORDER BY us.assigned_at DESC
+       LIMIT 1`,
+      [user.id]
+    );
+
+    const sectionId: number | null = sectionResult.rows[0]?.section_id ?? null;
+    const sectionName: string | null = sectionResult.rows[0]?.section_name ?? null;
+
     const userResponse = {
       id: user.id,
       username: user.username,
@@ -121,45 +153,61 @@ router.get('/me', verifyToken, async (req: any, res: express.Response) => {
       firstName: user.first_name,
       lastName: user.last_name,
       role: user.role,
-      // sectionId: user.sectionId,
-      lastLogin: user.last_login
+      lastLogin: user.last_login,
+      section_id: sectionId,
+      section_name: sectionName
     };
-    
-    res.json(userResponse);
+
+    res.json({
+      success: true,
+      data: userResponse
+    });
   } catch (error) {
     console.error('Get me error:', error);
     res.status(500).json({ message: 'Error al obtener información del usuario' });
   }
 });
 
-// POST /api/auth/register - Registrar un nuevo usuario (ejemplo)
+// POST /api/auth/register - Registrar un nuevo usuario
 router.post('/register', [
-    body('username').notEmpty(),
-    body('email').isEmail(),
-    body('password').isLength({ min: 6 }),
-    body('first_name').notEmpty(),
-    body('last_name').notEmpty(),
-    body('role').isIn(['admin', 'gerencia', 'jefe', 'doctor']),
+    body('username').notEmpty().withMessage('El nombre de usuario es requerido'),
+    body('email').isEmail().withMessage('El email es inválido'),
+    body('password').isLength({ min: 6 }).withMessage('La contraseña debe tener al menos 6 caracteres'),
+    body('first_name').notEmpty().withMessage('El nombre es requerido'),
+    body('last_name').notEmpty().withMessage('El apellido es requerido'),
     handleValidationErrors
 ], async (req: express.Request, res: express.Response) => {
-    const { username, email, password, first_name, last_name, role } = req.body;
+    const { username, email, password, first_name, last_name } = req.body;
 
     try {
+        const existingUserCheck = await pool.query('SELECT id FROM sgh_users WHERE email = $1 OR username = $2', [email, username]);
+        
+        // **CORRECCIÓN: Se verifica que rowCount no sea null antes de usarlo.**
+       if (existingUserCheck && existingUserCheck.rowCount && existingUserCheck.rowCount > 0) {
+            return res.status(409).json({ success: false, error: 'El email o nombre de usuario ya existe.' });
+        }
+
+        const userCountResult = await pool.query('SELECT COUNT(*) FROM sgh_users');
+        const role = parseInt(userCountResult.rows[0].count, 10) === 0 ? 'admin' : 'doctor';
+
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        const newUser = await pool.query(
+        const newUserResult = await pool.query(
             `INSERT INTO sgh_users (username, email, password, first_name, last_name, role)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+             VALUES ($1, $2, $3, $4, $5, $6) 
+             RETURNING id, username, email, first_name, last_name, role, created_at`,
             [username, email, hashedPassword, first_name, last_name, role]
         );
 
-        res.status(201).json(newUser.rows[0]);
+        res.status(201).json({
+            success: true,
+            message: `Usuario '${username}' registrado exitosamente como '${role}'. Ahora puedes iniciar sesión.`,
+            data: newUserResult.rows[0]
+        });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Error registering new user' });
+        console.error('Error en el registro:', error);
+        res.status(500).json({ success: false, error: 'Error al registrar el nuevo usuario.' });
     }
-});
+ });
 
-
-export default router;
-
+ export default router;

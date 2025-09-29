@@ -6,44 +6,40 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Plus, Edit2, Trash2, Search, CheckCircle, XCircle } from 'lucide-react';
-import { sectionsAPI } from '@/services/api';
+import { specialtiesAPI } from '@/services/api';
 
-interface Section {
+interface Specialty {
   id: string;
   name: string;
   description: string;
   is_active: boolean;
 }
 
-interface SectionManagementProps {
-  onSectionsUpdate: () => void;
-}
-
-export function SectionManagement({ onSectionsUpdate }: SectionManagementProps) {
-  const [sections, setSections] = useState<Section[]>([]);
+export function SpecialtyManagement() {
+  const [specialties, setSpecialties] = useState<Specialty[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingSection, setEditingSection] = useState<Section | null>(null);
+  const [editingSpecialty, setEditingSpecialty] = useState<Specialty | null>(null);
   const [formData, setFormData] = useState({ name: '', description: '', is_active: true });
 
   useEffect(() => {
-    loadSections();
+    loadSpecialties();
   }, []);
 
-  const loadSections = async () => {
+  const loadSpecialties = async () => {
     try {
       setLoading(true);
-      const response = await sectionsAPI.getAll();
+      const response = await specialtiesAPI.getAll();
       if (response.data.success) {
-        setSections(response.data.data);
+        setSpecialties(response.data.data);
       } else {
-        setError(response.data.error || 'Error al cargar secciones');
+        setError(response.data.message || 'Error al cargar especialidades');
       }
     } catch (err) {
-      setError('No se pudieron cargar las secciones. Verifique la conexión con el servidor.');
+      setError('No se pudieron cargar las especialidades. Verifique la conexión con el servidor.');
     } finally {
       setLoading(false);
     }
@@ -51,15 +47,15 @@ export function SectionManagement({ onSectionsUpdate }: SectionManagementProps) 
 
   const resetForm = () => {
     setFormData({ name: '', description: '', is_active: true });
-    setEditingSection(null);
+    setEditingSpecialty(null);
   };
 
-  const handleOpenDialog = (section: Section | null = null) => {
+  const handleOpenDialog = (specialty: Specialty | null = null) => {
     setError('');
     setSuccessMessage('');
-    if (section) {
-      setEditingSection(section);
-      setFormData({ name: section.name, description: section.description, is_active: section.is_active });
+    if (specialty) {
+      setEditingSpecialty(specialty);
+      setFormData({ name: specialty.name, description: specialty.description, is_active: specialty.is_active });
     } else {
       resetForm();
     }
@@ -69,60 +65,58 @@ export function SectionManagement({ onSectionsUpdate }: SectionManagementProps) 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) {
-      setError('El nombre de la sección es requerido.');
+      setError('El nombre de la especialidad es requerido.');
       return;
     }
 
     try {
       let response;
-      if (editingSection) {
-        response = await sectionsAPI.update(editingSection.id, formData);
+      if (editingSpecialty) {
+        response = await specialtiesAPI.update(editingSpecialty.id, formData);
       } else {
-        response = await sectionsAPI.create(formData);
+        response = await specialtiesAPI.create(formData);
       }
 
       if (response.data.success) {
         setSuccessMessage(response.data.message);
         setIsDialogOpen(false);
-        await loadSections();
-        onSectionsUpdate();
+        loadSpecialties();
         setTimeout(() => setSuccessMessage(''), 3000);
       } else {
-        setError(response.data.error || 'Ocurrió un error.');
+        setError(response.data.message || 'Ocurrió un error.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Error al guardar la sección.');
+      setError(err.response?.data?.message || 'Error al guardar la especialidad.');
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Estás seguro de eliminar esta sección? Esta acción no se puede deshacer.')) return;
+    if (!confirm('¿Estás seguro de desactivar esta especialidad?')) return;
 
     try {
-      const response = await sectionsAPI.delete(id);
+      const response = await specialtiesAPI.delete(id);
       if (response.data.success) {
         setSuccessMessage(response.data.message);
-        await loadSections();
-        onSectionsUpdate();
+        loadSpecialties();
         setTimeout(() => setSuccessMessage(''), 3000);
       } else {
-        setError(response.data.error || 'Error al eliminar.');
+        setError(response.data.message || 'Error al eliminar.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Error al eliminar la sección.');
+      setError(err.response?.data?.message || 'Error al desactivar la especialidad.');
     }
   };
 
-  const filteredSections = sections.filter(s => 
+  const filteredSpecialties = specialties.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    s.description.toLowerCase().includes(searchTerm.toLowerCase())
+    (s.description && s.description.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Gestión de Secciones</h2>
-        <Button onClick={() => handleOpenDialog()}><Plus className="h-4 w-4 mr-2" /> Nueva Sección</Button>
+        <h2 className="text-2xl font-bold">Gestión de Especialidades</h2>
+        <Button onClick={() => handleOpenDialog()}><Plus className="h-4 w-4 mr-2" /> Nueva Especialidad</Button>
       </div>
 
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
@@ -131,10 +125,10 @@ export function SectionManagement({ onSectionsUpdate }: SectionManagementProps) 
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
-            <CardTitle>Lista de Secciones</CardTitle>
+            <CardTitle>Lista de Especialidades</CardTitle>
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-              <Input placeholder="Buscar sección..." className="pl-8" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+              <Input placeholder="Buscar especialidad..." className="pl-8" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
             </div>
           </div>
         </CardHeader>
@@ -151,24 +145,24 @@ export function SectionManagement({ onSectionsUpdate }: SectionManagementProps) 
             <TableBody>
               {loading ? (
                 <TableRow><TableCell colSpan={4} className="text-center">Cargando...</TableCell></TableRow>
-              ) : filteredSections.length > 0 ? (
-                filteredSections.map(section => (
-                  <TableRow key={section.id}>
-                    <TableCell className="font-medium">{section.name}</TableCell>
-                    <TableCell>{section.description}</TableCell>
+              ) : filteredSpecialties.length > 0 ? (
+                filteredSpecialties.map(specialty => (
+                  <TableRow key={specialty.id}>
+                    <TableCell className="font-medium">{specialty.name}</TableCell>
+                    <TableCell>{specialty.description}</TableCell>
                     <TableCell>
-                      {section.is_active ? 
+                      {specialty.is_active ? 
                         <span className="flex items-center text-green-600"><CheckCircle className="h-4 w-4 mr-1"/> Activo</span> : 
                         <span className="flex items-center text-red-600"><XCircle className="h-4 w-4 mr-1"/> Inactivo</span>}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" onClick={() => handleOpenDialog(section)}><Edit2 className="h-4 w-4" /></Button>
-                      <Button variant="destructive" size="sm" className="ml-2" onClick={() => handleDelete(section.id)}><Trash2 className="h-4 w-4" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => handleOpenDialog(specialty)}><Edit2 className="h-4 w-4" /></Button>
+                      <Button variant="destructive" size="sm" className="ml-2" onClick={() => handleDelete(specialty.id)}><Trash2 className="h-4 w-4" /></Button>
                     </TableCell>
                   </TableRow>
                 ))
               ) : (
-                <TableRow><TableCell colSpan={4} className="text-center">No se encontraron secciones.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={4} className="text-center">No se encontraron especialidades.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
@@ -178,8 +172,8 @@ export function SectionManagement({ onSectionsUpdate }: SectionManagementProps) 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editingSection ? 'Editar Sección' : 'Nueva Sección'}</DialogTitle>
-            <DialogDescription>Completa los detalles de la sección.</DialogDescription>
+            <DialogTitle>{editingSpecialty ? 'Editar Especialidad' : 'Nueva Especialidad'}</DialogTitle>
+            <DialogDescription>Completa los detalles de la especialidad.</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -190,7 +184,7 @@ export function SectionManagement({ onSectionsUpdate }: SectionManagementProps) 
               <label htmlFor="description">Descripción</label>
               <Input id="description" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
             </div>
-            {editingSection && (
+            {editingSpecialty && (
               <div className="flex items-center space-x-2">
                 <input type="checkbox" id="is_active" checked={formData.is_active} onChange={e => setFormData({...formData, is_active: e.target.checked})} />
                 <label htmlFor="is_active">Activo</label>
@@ -198,7 +192,7 @@ export function SectionManagement({ onSectionsUpdate }: SectionManagementProps) 
             )}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancelar</Button>
-              <Button type="submit">{editingSection ? 'Guardar Cambios' : 'Crear Sección'}</Button>
+              <Button type="submit">{editingSpecialty ? 'Guardar Cambios' : 'Crear Especialidad'}</Button>
             </div>
           </form>
         </DialogContent>

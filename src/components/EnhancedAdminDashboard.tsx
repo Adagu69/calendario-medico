@@ -11,30 +11,34 @@ import {
   Clock,
   BarChart3,
   UserCog,
-  ClipboardList // Icon for sections
+  ClipboardList,
+  Building // Icon for Sections
 } from 'lucide-react';
 import DoctorCalendar from './DoctorCalendar';
 import { DoctorManagement } from './DoctorManagement';
 import UserManagement from './admin/UserManagement';
-import { SectionManagement } from './admin/SectionManagement'; // Import the new component
+import { SectionManagement } from './admin/SectionManagement';
+import { SpecialtyManagement } from './admin/SpecialtyManagement';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { settingsService, doctorService } from '../services/medicalApi';
-import { sectionsAPI } from '../services/api';
-import type { ExtendedUser, MedicalSection, ExtendedDoctor, SystemSettings } from '../types/medical';
+import { sectionService, doctorService, settingsService, specialtyService, reportService } from '../services/medicalApi';
+import { usersAPI } from '../services/api';
+import type { ExtendedUser, MedicalSection, ExtendedDoctor, SystemSettings, Specialty } from '../types/medical';
 
 interface EnhancedAdminDashboardProps {
   user: ExtendedUser;
   onLogout: () => void;
 }
 
-export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({ 
+export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
   user, 
   onLogout 
 }) => {
   const [activeTab, setActiveTab] = useState('calendar');
   const [activeSection, setActiveSection] = useState<string>('');
   const [sections, setSections] = useState<MedicalSection[]>([]);
+  const [specialties, setSpecialties] = useState<Specialty[]>([]); // Keep specialties for forms
   const [doctors, setDoctors] = useState<ExtendedDoctor[]>([]);
+  const [sectionChiefCount, setSectionChiefCount] = useState<number>(user.role === 'jefe' ? 1 : 0);
   const [selectedMonth, setSelectedMonth] = useState<string>(
     new Date().toISOString().slice(0, 7)
   );
@@ -43,6 +47,8 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   useEffect(() => {
     loadInitialData();
@@ -51,20 +57,25 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
   useEffect(() => {
     if (activeSection) {
       loadSectionDoctors();
+      loadSectionChiefCount(activeSection);
     }
   }, [activeSection]);
 
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const sectionsResponse = await sectionsAPI.getAll();
-      const sectionsData = sectionsResponse.data.success ? sectionsResponse.data.data : [];
+      const [sectionsData, specialtiesData] = await Promise.all([
+        sectionService.getAllSections(),
+        specialtyService.getAllSpecialties()
+      ]);
+      
       setSections(sectionsData);
+      setSpecialties(specialtiesData);
       
       if (user.role === 'jefe' && user.section_id) {
-        setActiveSection(user.section_id);
+        setActiveSection(String(user.section_id));
       } else if (sectionsData.length > 0) {
-        setActiveSection(sectionsData[0].id);
+        setActiveSection(String(sectionsData[0].id));
       }
       
       try {
@@ -82,14 +93,56 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
   };
 
   const loadSectionDoctors = async () => {
+    const sectionId = user.role === 'admin' ? activeSection : user.section_id;
+
+    if (!sectionId) {
+      setDoctors([]);
+      return;
+    }
+
     try {
-      const doctorsData = user.role === 'admin' 
-        ? await doctorService.getDoctorsBySection(activeSection)
-        : await doctorService.getDoctorsBySection(user.section_id!);
-      
-      setDoctors(doctorsData.filter(doc => doc.is_active));
+      const doctorsData = await doctorService.getDoctorsBySection(sectionId);
+      setDoctors(doctorsData);
     } catch (error) {
       console.error('Error loading doctors:', error);
+      setDoctors([]);
+    }
+  };
+
+  const loadSectionChiefCount = async (sectionId: string) => {
+    if (user.role === 'jefe') {
+      setSectionChiefCount(1);
+      return;
+    }
+
+    if (!sectionId || user.role !== 'admin') {
+      setSectionChiefCount(0);
+      return;
+    }
+
+    try {
+      const response = await usersAPI.getAll();
+      if (response.data?.success && Array.isArray(response.data.data)) {
+        const chiefs = (response.data.data as ExtendedUser[]).filter((u) => {
+          if (u.role !== 'jefe') return false;
+
+          if (!sectionId) return true;
+
+          if (typeof u.section_id === 'number') {
+            return String(u.section_id) === sectionId;
+          }
+
+          // If the API doesn't provide section info, count the chief for global visibility
+          return true;
+        });
+
+        setSectionChiefCount(chiefs.length);
+      } else {
+        setSectionChiefCount(0);
+      }
+    } catch (error) {
+      console.error('Error loading section chiefs:', error);
+      setSectionChiefCount(user.role === 'jefe' ? 1 : 0);
     }
   };
 
@@ -112,16 +165,36 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
   };
 
   const handleExportExcel = async () => {
+    if (!selectedMonth) return;
+
     try {
-      console.log('Exporting to Excel...');
-    } catch (error) {
-      console.error('Error exporting to Excel:', error);
+      setReportError(null);
+      setIsGeneratingReport(true);
+
+      const blob = await reportService.downloadMonthlySchedule({ month: selectedMonth });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `reporte-turnos-${selectedMonth}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      console.error('Error exporting report:', error);
+      const message =
+        error?.response?.data?.message ||
+        'No se pudo generar el reporte. Verifica que existan turnos para los filtros seleccionados.';
+      setReportError(message);
+      alert(message);
+    } finally {
+      setIsGeneratingReport(false);
     }
   };
 
   const getSectionDisplayName = (sectionId: string) => {
-    const section = sections.find(s => s.id === sectionId);
-    return section?.display_name || 'Sección no encontrada';
+    const section = sections.find(s => String(s.id) === sectionId);
+    return section?.name || 'Sección no encontrada';
   };
 
   if (loading) {
@@ -205,7 +278,7 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
                 >
                   {sections.map(section => (
                     <option key={section.id} value={section.id}>
-                      {section.display_name}
+                      {section.name}
                     </option>
                   ))}
                 </select>
@@ -225,7 +298,7 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-green-600">
-                {doctors.filter(d => d.is_chief).length}
+                {sectionChiefCount}
               </div>
               <div className="text-sm text-gray-600">Jefes de Sección</div>
             </div>
@@ -256,8 +329,14 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
             </TabsTrigger>
             {user.role === 'admin' && (
               <TabsTrigger value="sections" className="flex items-center">
-                <ClipboardList className="w-4 h-4 mr-2" />
+                <Building className="w-4 h-4 mr-2" />
                 Secciones
+              </TabsTrigger>
+            )}
+            {user.role === 'admin' && (
+              <TabsTrigger value="specialties" className="flex items-center">
+                <ClipboardList className="w-4 h-4 mr-2" />
+                Especialidades
               </TabsTrigger>
             )}
             {user.role === 'admin' && (
@@ -301,23 +380,27 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
                   </select>
                   <button
                     onClick={handleExportExcel}
-                    className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 flex items-center text-sm"
+                    disabled={isGeneratingReport}
+                    className={`bg-green-600 text-white px-4 py-2 rounded-md flex items-center text-sm transition-colors ${
+                      isGeneratingReport ? 'opacity-60 cursor-not-allowed' : 'hover:bg-green-700'
+                    }`}
                   >
                     <Download className="w-4 h-4 mr-2" />
-                    Exportar Excel
+                    {isGeneratingReport ? 'Generando...' : 'Exportar Excel'}
                   </button>
                 </div>
               </div>
               
               <DoctorCalendar
                 user={{
-                  id: user.id,
+                  id: String(user.id),
                   username: user.username,
                   email: user.email,
                   role: user.role === 'admin' ? 'admin' : 'viewer',
-                  specialtyAccess: user.section_id ? [user.section_id] : [],
+                  specialtyAccess: user.section_id ? [String(user.section_id)] : [],
                   name: `${user.first_name} ${user.last_name}`
                 }}
+                doctors={doctors}
                 onChangesDetected={handleCalendarChange}
               />
             </div>
@@ -327,13 +410,21 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
             <DoctorManagement
               currentUser={user}
               selectedSection={activeSection}
+              sections={sections}
+              specialties={specialties}
               onDoctorChange={loadSectionDoctors}
             />
           </TabsContent>
 
           {user.role === 'admin' && (
             <TabsContent value="sections" className="space-y-4">
-              <SectionManagement />
+              <SectionManagement onSectionsUpdate={loadInitialData} />
+            </TabsContent>
+          )}
+
+          {user.role === 'admin' && (
+            <TabsContent value="specialties" className="space-y-4">
+              <SpecialtyManagement />
             </TabsContent>
           )}
 
@@ -348,6 +439,11 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 Reportes y Estadísticas
               </h3>
+              {reportError && (
+                <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {reportError}
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="border border-gray-200 rounded-lg p-4">
                   <div className="flex items-center mb-3">
@@ -357,8 +453,14 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
                   <p className="text-sm text-gray-600 mb-3">
                     Estadísticas de horarios y asistencia del mes
                   </p>
-                  <button className="w-full bg-blue-100 text-blue-700 py-2 px-3 rounded-md text-sm hover:bg-blue-200">
-                    Generar Reporte
+                  <button
+                    onClick={handleExportExcel}
+                    disabled={isGeneratingReport}
+                    className={`w-full bg-blue-100 text-blue-700 py-2 px-3 rounded-md text-sm transition-colors ${
+                      isGeneratingReport ? 'opacity-60 cursor-not-allowed' : 'hover:bg-blue-200'
+                    }`}
+                  >
+                    {isGeneratingReport ? 'Generando...' : 'Generar Reporte'}
                   </button>
                 </div>
                 <div className="border border-gray-200 rounded-lg p-4">
@@ -369,7 +471,7 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
                   <p className="text-sm text-gray-600 mb-3">
                     Horarios que requieren aprobación
                   </p>
-                  <button className="w-full bg-amber-100 text-amber-700 py-2 px-3 rounded-md text-sm hover:bg-amber-200">
+                  <button className="w-full bg-amber-100 text-amber-200 py-2 px-3 rounded-md text-sm hover:bg-amber-200">
                     Ver Pendientes
                   </button>
                 </div>
@@ -381,8 +483,14 @@ export const EnhancedAdminDashboard: React.FC<EnhancedAdminDashboardProps> = ({
                   <p className="text-sm text-gray-600 mb-3">
                     Exportar horarios en formato Excel
                   </p>
-                  <button className="w-full bg-green-100 text-green-700 py-2 px-3 rounded-md text-sm hover:bg-green-200">
-                    Exportar Excel
+                  <button
+                    onClick={handleExportExcel}
+                    disabled={isGeneratingReport}
+                    className={`w-full bg-green-100 text-green-700 py-2 px-3 rounded-md text-sm transition-colors ${
+                      isGeneratingReport ? 'opacity-60 cursor-not-allowed' : 'hover:bg-green-200'
+                    }`}
+                  >
+                    {isGeneratingReport ? 'Generando...' : 'Exportar Excel'}
                   </button>
                 </div>
               </div>

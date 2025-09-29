@@ -11,8 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Clock, Calendar, Save, X } from 'lucide-react';
+import { Clock, Calendar, Save } from 'lucide-react';
 import type { DayPopoverProps, SGHTimeSlot } from '@/types/sgh-types';
 
 const DayPopover: React.FC<DayPopoverProps> = ({
@@ -151,26 +150,17 @@ const DayPopover: React.FC<DayPopoverProps> = ({
           {selectedSlotsData.length > 0 && (
             <div>
               <Label className="text-sm font-medium">Horarios seleccionados:</Label>
-              <div className="mt-2 flex flex-wrap gap-2">
+              <div className="mt-3 flex flex-wrap gap-3">
                 {selectedSlotsData.map(slot => (
-                  <Badge
+                  <button
                     key={slot.id}
-                    variant="secondary"
-                    className="text-xs"
-                    style={{
-                      backgroundColor: slot.color + '20',
-                      borderColor: slot.color,
-                      color: slot.color
-                    }}
-                  >
-                    {slot.name} ({slot.startTime}-{slot.endTime})
-                    <button
-                      onClick={() => handleSlotToggle(slot.id, false)}
-                      className="ml-1 hover:bg-red-100 rounded-full p-0.5"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </Badge>
+                    type="button"
+                    onClick={() => handleSlotToggle(slot.id, false)}
+                    className="w-6 h-6 rounded-full border-2 border-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 transition-transform hover:scale-110"
+                    style={{ backgroundColor: slot.color }}
+                    title={`${slot.name} (${slot.startTime} - ${slot.endTime})`}
+                    aria-label={`Quitar horario ${slot.name}`}
+                  />
                 ))}
               </div>
             </div>

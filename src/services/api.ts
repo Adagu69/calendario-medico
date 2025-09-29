@@ -128,3 +128,18 @@ export const sectionsAPI = {
   delete: (id: string) =>
     apiClient.delete(`/sections/${id}`)
 };
+
+// Specialties API
+export const specialtiesAPI = {
+  getAll: () =>
+    apiClient.get('/specialties'),
+  
+  create: (specialtyData: any) =>
+    apiClient.post('/specialties', specialtyData),
+  
+  update: (id: string, specialtyData: any) =>
+    apiClient.put(`/specialties/${id}`, specialtyData),
+  
+  delete: (id: string) =>
+    apiClient.delete(`/specialties/${id}`)
+};

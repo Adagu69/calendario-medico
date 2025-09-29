@@ -94,38 +94,22 @@ const CalendarGrid: React.FC<CalendarGridProps> = ({
   
   const renderTimeSlotBadges = (slots: SGHTimeSlot[]) => {
     if (slots.length === 0) return null;
-    
-    if (slots.length === 1) {
-      const slot = slots[0];
-      return (
-        <Badge 
-          variant="secondary" 
-          className="text-xs truncate w-full justify-center"
-          style={{ 
-            backgroundColor: slot.color + '20', 
-            borderColor: slot.color,
-            color: slot.color 
-          }}
-        >
-          {slot.name}
-        </Badge>
-      );
-    }
-    
-    // Múltiples slots - mostrar indicadores de color
+
+    const visibleSlots = slots.slice(0, 4);
+
     return (
-      <div className="flex gap-1 flex-wrap">
-        {slots.slice(0, 3).map((slot, index) => (
+      <div className="flex gap-1 flex-wrap items-center">
+        {visibleSlots.map((slot) => (
           <div
-            key={slot.id}
-            className="w-3 h-3 rounded-full flex-shrink-0"
+            key={`slot-indicator-${slot.id}`}
+            className="w-3 h-3 rounded-full border border-white shadow-sm"
             style={{ backgroundColor: slot.color }}
             title={`${slot.name} (${slot.startTime}-${slot.endTime})`}
           />
         ))}
-        {slots.length > 3 && (
+        {slots.length > visibleSlots.length && (
           <div className="w-3 h-3 rounded-full bg-gray-400 flex items-center justify-center">
-            <span className="text-xs text-white">+</span>
+            <span className="text-[10px] text-white">+</span>
           </div>
         )}
       </div>
